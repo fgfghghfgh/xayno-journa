@@ -575,7 +575,7 @@ function openTradeChart(trade) {
       const query = new URLSearchParams({ address: trade.address, timeframe: selectedTimeframe, chain, from: String(from), to: String(to), start: String(legacyStart), count: String(legacyCount) });
       const response = await apiFetch(`/api/chart/candles?${query}`);
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || 'دریافت کندل ناموفق بود.');
+      if (!response.ok) throw new Error(payload.message || (response.status === 503 ? 'سرویس چارت موقتاً محدود شده؛ کمی بعد دوباره تلاش کن.' : 'دریافت کندل ناموفق بود.'));
       if (payload.valueType !== 'marketCap') throw new Error('سرویس چارت هنوز مارکت‌کپ برنمی‌گرداند؛ API ژورنال وب را به‌روزرسانی کن.');
       if (!payload.candles?.length) throw new Error('Birdeye برای این توکن در تایم‌فریم انتخابی کندلی برنگرداند؛ آدرس قرارداد یا تایم‌فریم را بررسی کن.');
       fullCandles = payload.candles;

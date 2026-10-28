@@ -176,7 +176,14 @@ async function fetchCirculatingSupply(address, chain) {
     headers: { 'x-chain': chain, 'x-api-key': BIRDEYE_API_KEY },
     signal: AbortSignal.timeout(12_000),
   });
-  if (!response.ok) throw new Error(`Birdeye token overview failed (${response.status}).`);
+  if (!response.ok) {
+    const errorBody = await response.text();
+    const error = new Error(`Birdeye token overview failed (${response.status}): ${errorBody}`);
+    error.status = response.status;
+    error.body = errorBody;
+    error.retryAfter = response.headers.get('retry-after');
+    throw error;
+  }
   const result = await response.json();
   const overview = result.data || {};
   const currentPrice = Number(overview.price);
@@ -224,8 +231,14 @@ app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
     });
     if (!response.ok) {
       const errorBody = await response.text();
-      if (errorBody.toLowerCase().includes('compute units usage limit exceeded')) {
+      const lowerErrorBody = errorBody.toLowerCase();
+      if (lowerErrorBody.includes('compute units usage limit exceeded') || lowerErrorBody.includes('quota exceeded') || lowerErrorBody.includes('usage limit exceeded')) {
         return res.status(503).json({ message: 'سهمیهٔ Compute Units کلید Birdeye تمام شده است. سهمیه را در حساب Birdeye بررسی کن یا پس از بازنشانی دوباره تلاش کن.' });
+      }
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('retry-after');
+        if (retryAfter) res.set('Retry-After', retryAfter);
+        return res.status(503).json({ message: retryAfter ? `Birdeye موقتاً درخواست‌ها را محدود کرده است؛ ${retryAfter} ثانیه صبر کن و دوباره تلاش کن.` : 'Birdeye موقتاً درخواست‌ها را محدود کرده است؛ کمی صبر کن و دوباره تلاش کن.' });
       }
       return res.status(502).json({ message: `Birdeye چارت را دریافت نکرد (${response.status}).` });
     }
@@ -241,6 +254,12 @@ app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
     journalChartCache.set(marketCapCacheKey, { timestamp: Date.now(), payload });
     return res.json(payload);
   } catch (error) {
+    if (error.status === 429) {
+      if (error.retryAfter) res.set('Retry-After', error.retryAfter);
+      const lowerError = String(error.body || error.message || '').toLowerCase();
+      const quotaExhausted = lowerError.includes('compute units usage limit exceeded') || lowerError.includes('quota exceeded') || lowerError.includes('usage limit exceeded');
+      return res.status(503).json({ message: quotaExhausted ? 'سهمیهٔ درخواست‌های Birdeye تمام شده است؛ سهمیه و صورتحساب API را بررسی کن.' : error.retryAfter ? `Birdeye موقتاً درخواست‌ها را محدود کرده است؛ ${error.retryAfter} ثانیه صبر کن و دوباره تلاش کن.` : 'Birdeye موقتاً درخواست‌ها را محدود کرده است؛ کمی صبر کن و دوباره تلاش کن.' });
+    }
     return res.status(502).json({ message: error.message === 'Birdeye did not return circulating supply.' ? 'Birdeye عرضهٔ درگردش این توکن را برنگرداند؛ دریافت نمودار مارکت‌کپ ممکن نیست.' : 'دریافت دادهٔ مارکت‌کپ از Birdeye ناموفق بود.' });
   }
 });
