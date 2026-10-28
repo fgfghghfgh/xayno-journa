@@ -168,16 +168,20 @@ app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
   const address = String(req.query.address || '').trim();
   const timeframe = String(req.query.timeframe || '5m');
   const chain = String(req.query.chain || 'solana');
-  const start = Number(req.query.start);
-  const count = Math.min(200, Math.max(1, Number(req.query.count) || 13));
+  const requestedStart = Number(req.query.from);
+  const requestedEnd = Number(req.query.to);
   const intervalSeconds = timeframe === '15m' ? 900 : timeframe === '5m' ? 300 : 0;
+  const maxCandles = 1500;
   if (!BIRDEYE_API_KEY) return res.status(503).json({ message: 'دریافت چارت وب تنظیم نشده؛ BIRDEYE_API_KEY را در Render اضافه کن.' });
-  if (!/^[A-Za-z0-9:_-]{1,128}$/.test(address) || !intervalSeconds || !Number.isInteger(start) || start <= 0 || !['solana', 'ethereum', 'base', 'bsc', 'arbitrum'].includes(chain)) {
+  if (!/^[A-Za-z0-9:_-]{1,128}$/.test(address) || !intervalSeconds || !Number.isInteger(requestedStart) || !Number.isInteger(requestedEnd) || requestedStart <= 0 || requestedEnd <= requestedStart || !['solana', 'ethereum', 'base', 'bsc', 'arbitrum'].includes(chain)) {
     return res.status(400).json({ message: 'آدرس توکن، تایم‌فریم یا بازهٔ کندل معتبر نیست.' });
   }
 
-  const end = start + count * intervalSeconds;
-  const cacheKey = `${chain}:${address}:${timeframe}:${start}:${count}`;
+  const requestedCount = Math.ceil((requestedEnd - requestedStart) / intervalSeconds);
+  const truncated = requestedCount > maxCandles;
+  const end = requestedEnd;
+  const start = truncated ? end - maxCandles * intervalSeconds : requestedStart;
+  const cacheKey = `${chain}:${address}:${timeframe}:${start}:${end}`;
   const cached = journalChartCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < 60_000) return res.json(cached.payload);
 
@@ -205,8 +209,8 @@ app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
       time: Math.floor(Number(item.unixTime) > 1e12 ? Number(item.unixTime) / 1000 : Number(item.unixTime)),
       open: Number(item.o), high: Number(item.h), low: Number(item.l), close: Number(item.c), volume: Number(item.v) || 0,
     })).filter((item) => item.time >= start && item.time < end && [item.open, item.high, item.low, item.close].every(Number.isFinite))
-      .sort((left, right) => left.time - right.time).slice(0, count);
-    const payload = { candles };
+      .sort((left, right) => left.time - right.time).slice(-maxCandles);
+    const payload = { candles, truncated, requestedFrom: requestedStart, loadedFrom: start, loadedTo: end };
     journalChartCache.set(cacheKey, { timestamp: Date.now(), payload });
     return res.json(payload);
   } catch (error) {

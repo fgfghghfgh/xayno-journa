@@ -110,9 +110,8 @@ function openTradeChart(trade) {
   const timeframe = chartData.activeTimeframe || '5m';
   const intervalSeconds = timeframe === '15m' ? 900 : 300;
   const existing = chartData.timeframes?.[timeframe];
-  const entryDate = trade.openedAt ? new Date(trade.openedAt) : new Date(Date.now() - intervalSeconds * 13 * 1000);
-  const start = existing?.start || Math.floor(entryDate.getTime() / (intervalSeconds * 1000)) * intervalSeconds;
-  const count = existing?.count || 13;
+  let fullCandles = [];
+  let selectionConfirmed = Boolean(existing?.candles?.length);
   const modal = document.createElement('div');
   modal.id = 'journalChartModal';
   modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.82);';
@@ -120,11 +119,12 @@ function openTradeChart(trade) {
     <header style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} · ${escapeHtml(trade.address)}</strong><button type="button" data-close-chart style="padding:7px 10px;border:1px solid rgba(255,255,255,.15);border-radius:6px;background:#182126;color:#edf7f4">بستن</button></header>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <label>تایم‌فریم <select data-chart-timeframe><option value="5m">۵ دقیقه</option><option value="15m">۱۵ دقیقه</option></select></label>
-      <label>شروع <input data-chart-start type="datetime-local" value="${localDateTimeValue(new Date(start * 1000))}"></label>
-      <label>تعداد کندل <input data-chart-count type="number" min="1" max="200" value="${count}" style="width:75px"></label>
-      <button type="button" data-load-chart style="padding:7px 10px;border:1px solid rgba(0,212,245,.3);border-radius:6px;background:rgba(0,212,245,.08);color:#00d4f5">دریافت کندل‌ها</button>
-      <button type="button" data-draw="segment">خط روند</button><button type="button" data-draw="fibonacciLine">فیبوناچی</button>
-      <button type="button" data-save-chart style="padding:7px 12px;border:1px solid rgba(0,245,160,.3);border-radius:6px;background:rgba(0,245,160,.09);color:#00f5a0">ذخیره چارت</button>
+      <label>از کندل <input data-chart-from type="number" min="1" value="1" style="width:70px"></label>
+      <label>تا کندل <input data-chart-to type="number" min="1" value="13" style="width:70px"></label>
+      <button type="button" data-load-chart style="padding:7px 10px;border:1px solid rgba(0,212,245,.3);border-radius:6px;background:rgba(0,212,245,.08);color:#00d4f5">دریافت چارت کامل</button>
+      <button type="button" data-confirm-range disabled style="padding:7px 10px;border:1px solid rgba(255,213,74,.28);border-radius:6px;background:rgba(255,213,74,.07);color:#ffd54a">تأیید و ذخیرهٔ کندل‌ها</button>
+      <button type="button" data-draw="segment" ${selectionConfirmed ? '' : 'disabled'}>خط روند</button><button type="button" data-draw="fibonacciLine" ${selectionConfirmed ? '' : 'disabled'}>فیبوناچی</button>
+      <button type="button" data-save-chart ${selectionConfirmed ? '' : 'disabled'} style="padding:7px 12px;border:1px solid rgba(0,245,160,.3);border-radius:6px;background:rgba(0,245,160,.09);color:#00f5a0">ذخیره چارت</button>
     </div>
     <div data-chart-status style="min-height:18px;color:#91a19c;font-size:11px"></div>
     <div id="journal-chart-canvas" style="flex:1;min-height:300px;width:100%"></div>
@@ -132,8 +132,8 @@ function openTradeChart(trade) {
   </section>`;
   document.body.append(modal);
   const timeframeSelect = modal.querySelector('[data-chart-timeframe]');
-  const startInput = modal.querySelector('[data-chart-start]');
-  const countInput = modal.querySelector('[data-chart-count]');
+  const fromInput = modal.querySelector('[data-chart-from]');
+  const toInput = modal.querySelector('[data-chart-to]');
   const status = modal.querySelector('[data-chart-status]');
   timeframeSelect.value = timeframe;
   modal.querySelector('[data-close-chart]').addEventListener('click', closeJournalChart);
@@ -144,13 +144,19 @@ function openTradeChart(trade) {
     status.textContent = `${snapshot.candles.length} کندل · ${timeframeSelect.value}`;
     return true;
   };
-  if (!loadSnapshot(existing)) status.textContent = 'بازهٔ شروع و تعداد کندل را انتخاب و دریافت کن.';
+  if (!loadSnapshot(existing)) status.textContent = 'ابتدا چارت کامل را بگیر؛ سپس شمارهٔ کندل شروع و پایان را وارد کن.';
   timeframeSelect.addEventListener('change', () => {
+    fullCandles = [];
+    selectionConfirmed = false;
+    modal.querySelector('[data-confirm-range]').disabled = true;
+    modal.querySelectorAll('[data-draw], [data-save-chart]').forEach((button) => { button.disabled = true; });
     const saved = chartData.timeframes?.[timeframeSelect.value];
     if (saved?.candles?.length) {
-      startInput.value = localDateTimeValue(new Date(saved.start * 1000));
-      countInput.value = saved.count;
+      selectionConfirmed = true;
+      fromInput.value = '1';
+      toInput.value = String(saved.candles.length);
       loadSnapshot(saved);
+      modal.querySelectorAll('[data-draw], [data-save-chart]').forEach((button) => { button.disabled = false; });
     } else {
       if (journalChartInstance) window.klinecharts.dispose('journal-chart-canvas');
       journalChartInstance = null;
@@ -159,28 +165,68 @@ function openTradeChart(trade) {
   });
   modal.querySelector('[data-load-chart]').addEventListener('click', async () => {
     const selectedTimeframe = timeframeSelect.value;
-    const selectedCount = Math.min(200, Math.max(1, Number(countInput.value) || 13));
     const intervalSeconds = selectedTimeframe === '15m' ? 900 : 300;
-    const selectedStart = Math.floor(new Date(startInput.value).getTime() / (intervalSeconds * 1000)) * intervalSeconds;
-    if (!Number.isFinite(selectedStart)) { status.textContent = 'زمان شروع معتبر نیست.'; return; }
+    const entryDate = trade.openedAt ? new Date(trade.openedAt) : new Date(Date.now() - intervalSeconds * 13 * 1000);
+    const exitDate = trade.closedAt ? new Date(trade.closedAt) : new Date();
+    const from = Math.floor(entryDate.getTime() / (intervalSeconds * 1000)) * intervalSeconds;
+    const to = Math.floor(exitDate.getTime() / (intervalSeconds * 1000)) * intervalSeconds + intervalSeconds;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) { status.textContent = 'زمان ورود/خروج معامله معتبر نیست.'; return; }
     const chain = ({ solana: 'solana', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum' })[String(trade.network || '').toLowerCase()] || 'solana';
-    status.textContent = 'در حال دریافت کندل‌ها از Birdeye...';
+    status.textContent = 'در حال دریافت تاریخچهٔ چارت معامله...';
     try {
-      const query = new URLSearchParams({ address: trade.address, timeframe: selectedTimeframe, chain, start: String(selectedStart), count: String(selectedCount) });
+      const historyCount = Math.max(1, Math.min(200, Math.ceil((to - from) / intervalSeconds)));
+      const query = new URLSearchParams({ address: trade.address, timeframe: selectedTimeframe, chain, from: String(from), to: String(to), start: String(from), count: String(historyCount) });
       const response = await apiFetch(`/api/chart/candles?${query}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || 'دریافت کندل ناموفق بود.');
-      if (!payload.candles?.length) throw new Error('برای این بازه کندلی پیدا نشد. زمان شروع را تغییر بده.');
-      chartData.timeframes[selectedTimeframe] = { start: selectedStart, count: selectedCount, candles: payload.candles, overlays: [] };
-      loadSnapshot(chartData.timeframes[selectedTimeframe]);
+      if (!payload.candles?.length) throw new Error('برای فاصلهٔ زمانی معامله کندلی پیدا نشد؛ زمان ورود و خروج را بررسی کن.');
+      fullCandles = payload.candles;
+      selectionConfirmed = false;
+      modal.querySelectorAll('[data-draw], [data-save-chart]').forEach((button) => { button.disabled = true; });
+      fromInput.value = '1';
+      toInput.value = String(Math.min(13, fullCandles.length));
+      modal.querySelector('[data-confirm-range]').disabled = false;
+      mountJournalChart({ candles: fullCandles, overlays: [] });
+      const limitedMessage = payload.truncated ? ' (فقط ۱۵۰۰ کندل آخر)' : '';
+      status.textContent = `${fullCandles.length} کندل در تاریخچه${limitedMessage}؛ شمارهٔ بازه را وارد و تأیید کن.`;
     } catch (error) {
       status.textContent = error.message;
     }
   });
+  modal.querySelector('[data-confirm-range]').addEventListener('click', async () => {
+    const from = Number(fromInput.value);
+    const to = Number(toInput.value);
+    if (!fullCandles.length) { status.textContent = 'ابتدا چارت کامل را دریافت کن.'; return; }
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from || to > fullCandles.length) {
+      status.textContent = `شماره‌ها باید بین ۱ تا ${fullCandles.length} باشند و کندل پایان بعد از شروع باشد.`;
+      return;
+    }
+    const candles = fullCandles.slice(from - 1, to);
+    selectionConfirmed = true;
+    const snapshot = { start: candles[0].time, count: candles.length, fromIndex: from, toIndex: to, candles, overlays: [] };
+    chartData.timeframes[timeframeSelect.value] = snapshot;
+    chartData.activeTimeframe = timeframeSelect.value;
+    const updatedTrade = { ...trade, chart: chartData, updatedAt: new Date().toISOString() };
+    status.textContent = 'در حال ذخیرهٔ کندل‌های انتخابی...';
+    try {
+      const response = await apiFetch(`/api/trades/${encodeURIComponent(trade.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chart: chartData }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || 'ذخیرهٔ کندل‌ها ناموفق بود.');
+      state.trades = state.trades.map((item) => item.id === trade.id ? payload.trade : item);
+      saveLocalTrades(state.trades);
+    } catch (error) {
+      state.trades = state.trades.map((item) => item.id === trade.id ? updatedTrade : item);
+      saveLocalTrades(state.trades);
+      syncLocalTradesToServer(state.trades);
+    }
+    loadSnapshot(snapshot);
+    modal.querySelectorAll('[data-draw], [data-save-chart]').forEach((button) => { button.disabled = false; });
+    status.textContent = `کندل ${from} تا ${to} ذخیره شد؛ حالا تحلیل کن و ترسیم‌ها را ذخیره کن.`;
+  });
   modal.querySelector('[data-save-chart]').addEventListener('click', async () => {
     const selectedTimeframe = timeframeSelect.value;
     const snapshot = chartData.timeframes[selectedTimeframe];
-    if (!snapshot?.candles?.length) { status.textContent = 'ابتدا کندل‌ها را دریافت کن.'; return; }
+    if (!selectionConfirmed || !snapshot?.candles?.length) { status.textContent = 'ابتدا شمارهٔ کندل شروع و پایان را تأیید کن.'; return; }
     snapshot.overlays = journalChartOverlayIds.map((id) => journalChartInstance?.getOverlayById(id)).filter(Boolean).map((overlay) => ({ name: overlay.name, points: overlay.points, styles: overlay.styles }));
     chartData.activeTimeframe = selectedTimeframe;
     const updated = { ...trade, chart: chartData, updatedAt: new Date().toISOString() };
