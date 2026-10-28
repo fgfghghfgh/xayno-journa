@@ -209,12 +209,16 @@ function localDateTimeValue(date) {
 }
 
 function closeJournalChart() {
+  window.removeEventListener('orientationchange', handleJournalViewportChange);
+  window.removeEventListener('resize', handleJournalViewportChange);
   if (journalChartInstance && window.klinecharts) window.klinecharts.dispose('journal-chart-canvas');
   journalChartInstance = null;
   journalChartOverlayIds = [];
   journalChartOverlayState = new Map();
   journalSelectedOverlayId = null;
   document.getElementById('journalChartModal')?.remove();
+  if (screen.orientation?.unlock) screen.orientation.unlock();
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
   if (document.body.classList.contains('journal-chart-open')) {
     const scrollY = Number(document.body.dataset.chartScrollY || 0);
     document.body.classList.remove('journal-chart-open');
@@ -226,6 +230,19 @@ function closeJournalChart() {
     delete document.body.dataset.chartScrollY;
     window.scrollTo(0, scrollY);
   }
+}
+
+function handleJournalViewportChange() {
+  requestAnimationFrame(() => {
+    try { journalChartInstance?.resize?.(); } catch (error) {}
+  });
+}
+
+function resizeJournalChart() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    handleJournalViewportChange();
+    window.dispatchEvent(new Event('resize'));
+  }));
 }
 
 function drawJournalOverlay(name) {
@@ -524,8 +541,8 @@ function openTradeChart(trade) {
   document.body.style.right = '0';
   document.body.style.width = '100%';
   modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;width:100vw;height:100vh;height:100dvh;padding:0;overflow:hidden;overscroll-behavior:none;touch-action:none;background:#070b10;';
-  modal.innerHTML = `<section class="journal-chart-modal-section" style="width:min(1100px,100%);height:min(760px,94vh);display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:#0d1418;color:#edf7f4;direction:rtl;font-family:Vazirmatn,Tahoma,sans-serif;">
-    <header class="journal-chart-header" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} · ${escapeHtml(trade.address)}</strong><div class="journal-chart-page-actions"><button type="button" data-chart-fullscreen title="فقط چارت" aria-label="نمایش فقط چارت">⛶</button><button type="button" data-close-chart title="خروج از چارت" aria-label="خروج از چارت">×</button></div></header>
+  modal.innerHTML = `<section class="journal-chart-modal-section" style="width:100%;height:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:0;border-radius:0;background:#0d1418;color:#edf7f4;direction:rtl;font-family:Vazirmatn,Tahoma,sans-serif;overflow:hidden">
+    <header class="journal-chart-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} <span class="journal-chart-address">· ${escapeHtml(trade.address)}</span></strong><div class="journal-chart-page-actions"><button type="button" data-chart-fullscreen title="تمام‌صفحه فقط چارت" aria-label="نمایش تمام‌صفحهٔ چارت">⛶</button><button type="button" data-chart-landscape title="حالت افقی 16:9" aria-label="حالت افقی 16:9">16:9</button><button type="button" data-close-chart title="خروج از چارت" aria-label="خروج از چارت">×</button></div></header>
     <div class="journal-chart-controls">
       <label>تایم‌فریم <select data-chart-timeframe><option value="5m">۵ دقیقه</option><option value="15m">۱۵ دقیقه</option></select></label>
       <label>از کندل <input data-chart-from type="number" min="1" value="1" style="width:70px"></label>
@@ -566,15 +583,46 @@ function openTradeChart(trade) {
   const status = modal.querySelector('[data-chart-status]');
   timeframeSelect.value = timeframe;
   modal.querySelector('[data-close-chart]').addEventListener('click', closeJournalChart);
+  window.addEventListener('orientationchange', handleJournalViewportChange);
+  window.addEventListener('resize', handleJournalViewportChange);
   const fullscreenButton = modal.querySelector('[data-chart-fullscreen]');
   fullscreenButton.addEventListener('click', () => {
     const chartOnly = modal.classList.toggle('is-chart-only');
     fullscreenButton.textContent = chartOnly ? '⤢' : '⛶';
-    fullscreenButton.title = chartOnly ? 'بازگشت به ابزارهای چارت' : 'فقط چارت';
+    fullscreenButton.title = chartOnly ? 'بازگشت به ابزارهای چارت' : 'تمام‌صفحه فقط چارت';
     fullscreenButton.setAttribute('aria-label', fullscreenButton.title);
-    requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('resize'));
-    });
+    resizeJournalChart();
+    if (chartOnly && !document.fullscreenElement && modal.requestFullscreen) modal.requestFullscreen().catch(() => {});
+    else if (!chartOnly && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  });
+  modal.querySelector('[data-chart-landscape]').addEventListener('click', async () => {
+    const landscapeButton = modal.querySelector('[data-chart-landscape]');
+    const enabling = !modal.classList.contains('is-landscape');
+    if (!enabling) {
+      modal.classList.remove('is-landscape');
+      landscapeButton.textContent = '16:9';
+      if (screen.orientation?.unlock) screen.orientation.unlock();
+      if (!modal.classList.contains('is-chart-only')) {
+        if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      }
+      resizeJournalChart();
+      return;
+    }
+    modal.classList.add('is-chart-only', 'is-landscape');
+    fullscreenButton.textContent = '⤢';
+    fullscreenButton.title = 'بازگشت به ابزارهای چارت';
+    fullscreenButton.setAttribute('aria-label', fullscreenButton.title);
+    landscapeButton.textContent = 'عمودی';
+    if (!document.fullscreenElement && modal.requestFullscreen) {
+      try { await modal.requestFullscreen(); } catch (error) {}
+    }
+    try {
+      if (!screen.orientation?.lock) throw new Error('orientation-lock-unavailable');
+      await screen.orientation.lock('landscape');
+    } catch (error) {
+      window.alert('برای نمای افقی، گوشی را بچرخان. اگر قفل جهت کار نکرد، چرخش صفحهٔ آیفون را از Control Center باز کن.');
+    }
+    resizeJournalChart();
   });
   modal.querySelectorAll('[data-draw]').forEach((button) => button.addEventListener('click', () => drawJournalOverlay(button.dataset.draw)));
   modal.querySelector('[data-tool-shelf]').addEventListener('click', (event) => {
