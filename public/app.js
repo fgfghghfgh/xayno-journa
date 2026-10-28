@@ -35,7 +35,6 @@ let activeJournalView = 'journal';
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
 let journalChartOverlayState = new Map();
-let journalYAxisTouchCleanup = null;
 let journalSelectedOverlayId = null;
 let journalCrosshair = { color: '#91a19c', width: 1, style: 'dashed' };
 
@@ -212,8 +211,6 @@ function localDateTimeValue(date) {
 function closeJournalChart() {
   window.removeEventListener('orientationchange', handleJournalViewportChange);
   window.removeEventListener('resize', handleJournalViewportChange);
-  journalYAxisTouchCleanup?.();
-  journalYAxisTouchCleanup = null;
   if (journalChartInstance && window.klinecharts) window.klinecharts.dispose('journal-chart-canvas');
   journalChartInstance = null;
   journalChartOverlayIds = [];
@@ -328,53 +325,6 @@ function renderJournalToolPanel() {
     journalChartInstance.overrideOverlay({ id: overlay.id, lock: stateForOverlay.locked });
     renderJournalToolPanel();
   });
-
-  function enableMobileMarketCapAxisDrag(chart, workspace) {
-    const touchTarget = workspace.querySelector('#journal-chart-y-axis-touch');
-    if (!touchTarget || typeof chart.getDrawPaneById !== 'function') return () => {};
-    let drag = null;
-    const start = (event) => {
-      if (event.touches.length !== 1) return;
-      const axis = chart.getDrawPaneById('candle_pane')?.getAxisComponent?.();
-      const range = axis?.getRange?.();
-      if (!axis || !range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return;
-      axis.setAutoCalcTickFlag?.(false);
-      drag = { axis, range, startY: event.touches[0].clientY, height: Math.max(workspace.clientHeight, 1) };
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    const move = (event) => {
-      if (!drag || event.touches.length !== 1) return;
-      const deltaY = event.touches[0].clientY - drag.startY;
-      const scale = Math.max(0.2, Math.min(5, Math.exp(deltaY / drag.height * 1.8)));
-      const center = (drag.range.from + drag.range.to) / 2;
-      const nextRange = drag.range.range * scale;
-      const from = center - nextRange / 2;
-      const to = center + nextRange / 2;
-      const realFrom = drag.axis.convertToRealValue(from);
-      const realTo = drag.axis.convertToRealValue(to);
-      drag.axis.setRange({ from, to, range: nextRange, realFrom, realTo, realRange: realTo - realFrom });
-      chart.updatePane?.(1);
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    const end = (event) => {
-      if (!drag) return;
-      drag = null;
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    touchTarget.addEventListener('touchstart', start, { passive: false });
-    touchTarget.addEventListener('touchmove', move, { passive: false });
-    touchTarget.addEventListener('touchend', end, { passive: false });
-    touchTarget.addEventListener('touchcancel', end, { passive: false });
-    return () => {
-      touchTarget.removeEventListener('touchstart', start);
-      touchTarget.removeEventListener('touchmove', move);
-      touchTarget.removeEventListener('touchend', end);
-      touchTarget.removeEventListener('touchcancel', end);
-    };
-  }
   content.querySelector('[data-overlay-hide]').addEventListener('click', () => {
     stateForOverlay.hidden = !stateForOverlay.hidden;
     journalChartOverlayState.set(overlay.id, stateForOverlay);
@@ -474,63 +424,6 @@ function clearJournalDrawings() {
   renderJournalToolPanel();
 }
 
-function enableMobileMarketCapAxisDrag(chart, workspace) {
-  const axisTouchTarget = workspace.querySelector('#journal-chart-y-axis-touch');
-  if (!axisTouchTarget || typeof chart.getDrawPaneById !== 'function') return () => {};
-  let dragState = null;
-
-  const start = (event) => {
-    if (event.touches.length !== 1) return;
-    const axis = chart.getDrawPaneById('candle_pane')?.getAxisComponent?.();
-    const range = axis?.getRange?.();
-    if (!axis || !range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return;
-    axis.setAutoCalcTickFlag?.(false);
-    dragState = {
-      axis,
-      range,
-      startY: event.touches[0].clientY,
-      height: Math.max(workspace.clientHeight, 1),
-    };
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const move = (event) => {
-    if (!dragState || event.touches.length !== 1) return;
-    const deltaY = event.touches[0].clientY - dragState.startY;
-    const scale = Math.max(0.18, Math.min(5, Math.exp(deltaY / dragState.height * 2)));
-    const center = (dragState.range.from + dragState.range.to) / 2;
-    const nextRange = dragState.range.range * scale;
-    const from = center - nextRange / 2;
-    const to = center + nextRange / 2;
-    const realFrom = dragState.axis.convertToRealValue(from);
-    const realTo = dragState.axis.convertToRealValue(to);
-    dragState.axis.setRange({ from, to, range: nextRange, realFrom, realTo, realRange: realTo - realFrom });
-    if (typeof chart.updatePane === 'function') chart.updatePane(1);
-    else chart.resize?.();
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const end = (event) => {
-    if (!dragState) return;
-    dragState = null;
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  axisTouchTarget.addEventListener('touchstart', start, { passive: false });
-  axisTouchTarget.addEventListener('touchmove', move, { passive: false });
-  axisTouchTarget.addEventListener('touchend', end, { passive: false });
-  axisTouchTarget.addEventListener('touchcancel', end, { passive: false });
-  return () => {
-    axisTouchTarget.removeEventListener('touchstart', start);
-    axisTouchTarget.removeEventListener('touchmove', move);
-    axisTouchTarget.removeEventListener('touchend', end);
-    axisTouchTarget.removeEventListener('touchcancel', end);
-  };
-}
-
 function applyJournalCrosshair() {
   if (!journalChartInstance) return;
   journalChartInstance.setStyles({ crosshair: { show: true, horizontal: { show: true, line: { show: true, color: journalCrosshair.color, size: journalCrosshair.width, style: journalCrosshair.style } }, vertical: { show: true, line: { show: true, color: journalCrosshair.color, size: journalCrosshair.width, style: journalCrosshair.style } } } });
@@ -557,8 +450,6 @@ function journalPnlSummary(trade) {
 
 function mountJournalChart(snapshot, trade) {
   if (!window.klinecharts || !snapshot?.candles?.length) return;
-  journalYAxisTouchCleanup?.();
-  journalYAxisTouchCleanup = null;
   if (journalChartInstance) window.klinecharts.dispose('journal-chart-canvas');
   journalChartOverlayIds = [];
   journalChartOverlayState = new Map();
@@ -575,8 +466,6 @@ function mountJournalChart(snapshot, trade) {
   journalChartInstance.applyNewData(snapshot.candles.map((candle) => ({
     timestamp: candle.time * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close, volume: candle.volume || 0,
   })));
-  const workspace = document.querySelector('#journalChartModal [data-chart-workspace]');
-  if (workspace) journalYAxisTouchCleanup = enableMobileMarketCapAxisDrag(journalChartInstance, workspace);
   const firstTimestamp = snapshot.candles[0].time * 1000;
   [
     { value: Number(trade?.entryMarketCap), color: '#00f5a0' },
@@ -656,7 +545,7 @@ function openTradeChart(trade) {
   document.body.style.width = '100%';
   modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;width:100vw;height:100vh;height:100dvh;padding:0;overflow:hidden;overscroll-behavior:none;touch-action:none;background:#070b10;';
   modal.innerHTML = `<section class="journal-chart-modal-section" style="width:100%;height:100%;max-height:100%;min-height:0;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:0;border-radius:0;background:#0d1418;color:#edf7f4;direction:rtl;font-family:Vazirmatn,Tahoma,sans-serif;overflow:hidden">
-    <header class="journal-chart-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} <span class="journal-chart-address">· ${escapeHtml(trade.address)}</span></strong><div class="journal-chart-page-actions"><button type="button" data-chart-fullscreen title="تمام‌صفحه فقط چارت" aria-label="نمایش تمام‌صفحهٔ چارت">⛶</button><button type="button" data-chart-landscape title="حالت افقی 16:9" aria-label="حالت افقی 16:9">16:9</button><button type="button" data-close-chart title="خروج از چارت" aria-label="خروج از چارت">×</button></div></header>
+    <header class="journal-chart-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} <span class="journal-chart-address">· ${escapeHtml(trade.address)}</span></strong><div class="journal-chart-page-actions"><button type="button" data-market-cap-zoom="out" title="کوچک‌نمایی عمودی؛ نمایش بازهٔ بزرگ‌تر مارکت‌کپ" aria-label="کوچک‌نمایی عمودی مارکت‌کپ">−</button><button type="button" data-market-cap-zoom="in" title="بزرگ‌نمایی عمودی؛ نمایش بازهٔ کوچک‌تر مارکت‌کپ" aria-label="بزرگ‌نمایی عمودی مارکت‌کپ">+</button><button type="button" data-market-cap-reset title="بازنشانی مقیاس به همهٔ کندل‌ها" aria-label="بازنشانی مقیاس مارکت‌کپ">↺</button><button type="button" data-chart-fullscreen title="تمام‌صفحه فقط چارت" aria-label="نمایش تمام‌صفحهٔ چارت">⛶</button><button type="button" data-chart-landscape title="حالت افقی 16:9" aria-label="حالت افقی 16:9">16:9</button><button type="button" data-close-chart title="خروج از چارت" aria-label="خروج از چارت">×</button></div></header>
     <div class="journal-chart-controls">
       <label>تایم‌فریم <select data-chart-timeframe><option value="5m">۵ دقیقه</option><option value="15m">۱۵ دقیقه</option></select></label>
       <label>از کندل <input data-chart-from type="number" min="1" value="1" style="width:70px"></label>
@@ -676,7 +565,6 @@ function openTradeChart(trade) {
         <div class="journal-shelf-body">${['خطوط', 'فیبوناچی', 'پوزیشن', 'شکل و یادداشت'].map((group) => `<div class="journal-tool-group"><strong>${group}</strong>${JOURNAL_CHART_TOOLS.filter((tool) => tool.group === group).map((tool) => `<button type="button" class="journal-shelf-tool" data-draw="${tool.id}" title="${tool.label}" aria-label="${tool.label}" ${selectionConfirmed ? '' : 'disabled'}>${journalToolIcon(tool.icon)}<span>${tool.label}</span></button>`).join('')}</div>`).join('')}</div>
       </aside>
       <div id="journal-chart-canvas"></div>
-      <div id="journal-chart-y-axis-touch" role="slider" aria-label="تغییر مقیاس عمودی مارکت‌کپ" title="برای بزرگ یا کوچک‌کردن مقیاس مارکت‌کپ، این نوار را بالا یا پایین بکش" ></div>
       <section id="journal-chart-tool-settings" class="journal-floating-settings" hidden>
         <header class="journal-settings-drag" data-settings-drag><span>${journalToolIcon('trend')}<span>تنظیمات ترسیم</span></span><button type="button" data-settings-close title="بستن پنل" aria-label="بستن پنل">×</button></header>
         <div class="journal-chart-tool-settings" data-tool-settings-content></div>
@@ -696,8 +584,39 @@ function openTradeChart(trade) {
   const fromInput = modal.querySelector('[data-chart-from]');
   const toInput = modal.querySelector('[data-chart-to]');
   const status = modal.querySelector('[data-chart-status]');
+  function applyMarketCapRange(from, to) {
+    const axis = journalChartInstance?.getDrawPaneById?.('candle_pane')?.getAxisComponent?.();
+    if (!axis || !Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
+    axis.setAutoCalcTickFlag?.(false);
+    const realFrom = axis.convertToRealValue(from);
+    const realTo = axis.convertToRealValue(to);
+    axis.setRange({ from, to, range: to - from, realFrom, realTo, realRange: realTo - realFrom });
+    if (typeof journalChartInstance.updatePane === 'function') journalChartInstance.updatePane(1);
+    else journalChartInstance.resize?.();
+  }
+  function adjustMarketCapRange(factor) {
+    const axis = journalChartInstance?.getDrawPaneById?.('candle_pane')?.getAxisComponent?.();
+    const range = axis?.getRange?.();
+    if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return;
+    const center = (range.from + range.to) / 2;
+    const nextRange = Math.max(1, Math.min(range.range * factor, Math.max(Math.abs(center) * 100, 1)));
+    applyMarketCapRange(center - nextRange / 2, center + nextRange / 2);
+  }
+  function resetMarketCapRange() {
+    const candles = chartData.timeframes?.[timeframeSelect.value]?.candles || fullCandles;
+    const values = (candles || []).flatMap((candle) => [Number(candle.low), Number(candle.high)]).filter((value) => Number.isFinite(value) && value > 0);
+    [Number(trade.entryMarketCap), Number(trade.exitMarketCap)].filter((value) => Number.isFinite(value) && value > 0).forEach((value) => values.push(value));
+    if (!values.length) return;
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    const padding = Math.max((high - low) * 0.06, high * 0.01, 1);
+    applyMarketCapRange(Math.max(0, low - padding), high + padding);
+  }
   timeframeSelect.value = timeframe;
   modal.querySelector('[data-close-chart]').addEventListener('click', closeJournalChart);
+  modal.querySelector('[data-market-cap-zoom="in"]').addEventListener('click', () => adjustMarketCapRange(0.8));
+  modal.querySelector('[data-market-cap-zoom="out"]').addEventListener('click', () => adjustMarketCapRange(1.25));
+  modal.querySelector('[data-market-cap-reset]').addEventListener('click', resetMarketCapRange);
   window.addEventListener('orientationchange', handleJournalViewportChange);
   window.addEventListener('resize', handleJournalViewportChange);
   const fullscreenButton = modal.querySelector('[data-chart-fullscreen]');
