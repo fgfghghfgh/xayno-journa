@@ -1,0 +1,10 @@
+{
+  "name": "XAYNO Journal",
+  "short_name": "XAYNOJ",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1013",
+  "theme_color": "#0b1013",
+  "description": "XAYNO trading journal calendar and summary",
+  "icons": []
+}

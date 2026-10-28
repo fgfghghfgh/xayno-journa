@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b1013" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>XAYNO Journal</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
+
+      :root {
+        --bg: #070b10;
+        --bg-2: #0d1419;
+        --panel: rgba(17, 24, 29, 0.82);
+        --panel-alt: rgba(22, 31, 37, 0.82);
+        --glass: rgba(255, 255, 255, 0.04);
+        --glass-strong: rgba(255, 255, 255, 0.06);
+        --line: rgba(255, 255, 255, 0.10);
+        --text: #edf7f4;
+        --text-muted: #c7d4d0;
+        --text-dim: #7a8b88;
+        --green: #00f5a0;
+        --green-soft: rgba(0, 245, 160, 0.14);
+        --cyan: #00d4f5;
+        --red: #ff4a6b;
+        --red-soft: rgba(255, 74, 107, 0.12);
+        --yellow: #fbbf24;
+        --shadow: rgba(0, 0, 0, 0.32);
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at 15% 0%, rgba(0, 245, 160, 0.08), transparent 28%),
+          radial-gradient(circle at 85% 100%, rgba(0, 212, 245, 0.08), transparent 30%),
+          linear-gradient(180deg, #050a0f 0%, #0a1117 50%, #070d12 100%);
+        color: var(--text);
+        font-family: 'Vazirmatn', Tahoma, sans-serif;
+      }
+
+      body {
+        padding: 18px 18px 42px;
+      }
+
+      button, input, select, textarea {
+        font: inherit;
+      }
+
+      .xh-root {
+        position: relative;
+        max-width: 1260px;
+        margin: 0 auto;
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 26px;
+        background: rgba(7, 11, 16, 0.68);
+        box-shadow: 0 30px 80px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04);
+        overflow: hidden;
+        backdrop-filter: blur(24px);
+      }
+
+      .xh-root::before,
+      .xh-root::after {
+        content: "";
+        position: absolute;
+        inset: auto;
+        border-radius: 50%;
+        filter: blur(65px);
+        pointer-events: none;
+      }
+
+      .xh-root::before {
+        width: 260px;
+        height: 260px;
+        right: -50px;
+        top: -60px;
+        background: rgba(0, 245, 160, 0.10);
+      }
+
+      .xh-root::after {
+        width: 280px;
+        height: 280px;
+        left: -90px;
+        bottom: -80px;
+        background: rgba(0, 212, 245, 0.10);
+      }
+
+      .xh-shell {
+        position: relative;
+        z-index: 1;
+      }
+
+      .xh-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding: 22px 30px 18px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        background: linear-gradient(180deg, rgba(0,0,0,0.14), rgba(255,255,255,0.02));
+        backdrop-filter: blur(18px);
+      }
+
+      .xh-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .xh-wordmark {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        font-family: 'Vazirmatn', sans-serif;
+        font-size: 28px;
+        font-weight: 800;
+        letter-spacing: 5px;
+        color: var(--green);
+        direction: ltr;
+        text-transform: uppercase;
+        text-shadow: 0 0 10px rgba(0,245,160,0.7), 0 0 20px rgba(0,245,160,0.45), 0 0 40px rgba(0,245,160,0.2), 2px 2px 0 rgba(0,0,0,0.8), 3px 3px 0 rgba(0,0,0,0.6), 4px 4px 0 rgba(0,0,0,0.4);
+      }
+
+      .xh-wordmark::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -4px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, var(--green), var(--cyan), var(--green), transparent);
+        border-radius: 2px;
+      }
+
+      .xh-logo-sub {
+        font-size: 10px;
+        letter-spacing: 6px;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        opacity: 0.9;
+      }
+
+      .xh-nav {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .xh-nav-btn {
+        position: relative;
+        border: 1px solid transparent;
+        border-radius: 14px;
+        background: transparent;
+        color: var(--text-dim);
+        padding: 10px 18px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.25s ease;
+      }
+
+      .xh-nav-btn:hover {
+        color: var(--text);
+        background: rgba(255,255,255,0.04);
+      }
+
+      .xh-nav-btn.active {
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(255,255,255,0.10);
+        color: var(--text);
+        box-shadow: 0 4px 20px rgba(0,245,160,0.10), inset 0 1px 0 rgba(255,255,255,0.08);
+      }
+
+      .xh-live-badge {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 18px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+        color: var(--text-muted);
+        box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+        font-size: 13px;
+      }
+
+      .xh-live-dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 10px rgba(0,245,160,0.75);
+        animation: xh-pulse 1.4s infinite ease-in-out;
+      }
+
+      .xh-live-count {
+        color: var(--green);
+        font-weight: 700;
+      }
+
+      @keyframes xh-pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.42; transform: scale(0.86); }
+      }
+
+      .xh-body {
+        padding: 24px 28px 34px;
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
+        margin-bottom: 22px;
+      }
+
+      .metric {
+        padding: 18px 20px;
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+        box-shadow: 0 10px 20px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+
+      .metric label {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .metric strong {
+        display: block;
+        font-size: clamp(22px, 2.3vw, 30px);
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .calendar-wrap {
+        display: grid;
+        grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.9fr);
+        gap: 18px;
+      }
+
+      .xh-glass {
+        border-radius: 22px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.016));
+        box-shadow: 0 20px 30px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.05);
+      }
+
+      .panel {
+        padding: 14px;
+      }
+
+      .month-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+        padding: 2px 6px 8px;
+      }
+
+      .month-header strong {
+        font-size: 16px;
+        color: var(--text);
+      }
+
+      .month-header button,
+      .action-btn,
+      .mini-btn {
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.04);
+        color: var(--text);
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .month-header button {
+        width: 38px;
+        height: 32px;
+        font-size: 20px;
+      }
+
+      .action-btn {
+        padding: 10px 16px;
+        border: none;
+        background: linear-gradient(135deg, var(--green), var(--cyan));
+        color: #04170f;
+        font-weight: 700;
+        box-shadow: 0 10px 24px rgba(0,245,160,0.25);
+      }
+
+      .mini-btn {
+        padding: 6px 10px;
+        font-size: 11px;
+      }
+
+      .month-header button:hover,
+      .action-btn:hover,
+      .mini-btn:hover {
+        transform: translateY(-1px);
+        border-color: rgba(0,245,160,0.35);
+        background: rgba(0,245,160,0.06);
+      }
+
+      .days-grid {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .week-name {
+        padding: 5px 0;
+        font-size: 10px;
+        text-align: center;
+        color: var(--text-dim);
+      }
+
+      .day-cell {
+        min-height: 82px;
+        padding: 6px 4px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.07);
+        background: rgba(255,255,255,0.02);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        cursor: pointer;
+        transition: all 0.18s ease;
+      }
+
+      .day-cell:hover {
+        border-color: rgba(0,245,160,0.28);
+        background: rgba(255,255,255,0.04);
+      }
+
+      .day-cell.selected {
+        border-color: rgba(0, 212, 245, 0.75);
+        background: rgba(0, 212, 245, 0.08);
+        box-shadow: 0 0 0 1px rgba(0,212,245,0.18), 0 6px 24px rgba(0,212,245,0.10);
+      }
+
+      .day-cell.green {
+        border-color: rgba(52, 211, 153, 0.42);
+        background: rgba(52,211,153,0.08);
+      }
+
+      .day-cell.red {
+        border-color: rgba(255, 74, 107, 0.42);
+        background: rgba(255,74,107,0.08);
+      }
+
+      .day-num {
+        font-weight: 700;
+        font-size: 12px;
+      }
+
+      .day-badges {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        flex-wrap: wrap;
+        font-size: 9px;
+      }
+
+      .badge-win { color: var(--green); }
+      .badge-loss { color: var(--red); }
+      .badge-open { color: var(--yellow); }
+
+      .detail-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 6px 12px;
+      }
+
+      .detail-head strong {
+        font-size: 15px;
+      }
+
+      .trade-pnl {
+        font-size: 12px;
+        font-weight: 700;
+        direction: ltr;
+      }
+
+      .detail-card {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 520px;
+        overflow: auto;
+        padding: 2px 2px 6px;
+      }
+
+      .trade-item {
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 14px;
+        background: rgba(255,255,255,0.02);
+        padding: 10px 12px;
+      }
+
+      .trade-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .trade-token {
+        font-weight: 700;
+        font-size: 14px;
+      }
+
+      .trade-meta {
+        margin-top: 5px;
+        color: var(--text-dim);
+        font-size: 11px;
+      }
+
+      .trade-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .mini-btn {
+        padding: 6px 9px;
+        font-size: 11px;
+      }
+
+      .empty {
+        min-height: 140px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        color: var(--text-dim); 
+        padding: 12px;
+        border: 1px dashed rgba(255,255,255,0.08);
+        border-radius: 12px;
+      }
+
+      .xh-form-panel {
+        margin-top: 22px;
+        padding: 20px 18px 18px;
+      }
+
+      .submit-form {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .field label {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .field input,
+      .field select,
+      .field textarea {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.09);
+        background: rgba(11,16,20,0.82);
+        color: var(--text);
+        padding: 11px 12px;
+        outline: none;
+        transition: all 0.2s ease;
+      }
+
+      .field input:focus,
+      .field select:focus,
+      .field textarea:focus {
+        border-color: rgba(0,245,160,0.55);
+        box-shadow: 0 0 0 4px rgba(0,245,160,0.08), 0 8px 24px rgba(0,245,160,0.08);
+      }
+
+      .field textarea {
+        min-height: 90px;
+        resize: vertical;
+      }
+
+      .action-btn {
+        padding: 12px 16px;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--green), var(--cyan));
+        border: none;
+        color: #04170f;
+        box-shadow: 0 10px 24px rgba(0,245,160,0.25);
+      }
+
+      .field.actions {
+        grid-column: 1 / -1;
+        flex-direction: row;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      @media (max-width: 900px) {
+        .calendar-wrap {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        body {
+          padding: 10px;
+        }
+
+        .xh-body {
+          padding: 18px 16px 24px;
+        }
+
+        .xh-header {
+          padding: 16px 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="xh-root">
+      <div class="xh-shell">
+        <header class="xh-header">
+          <div class="xh-brand">
+            <div class="xh-wordmark">XAYNO</div>
+            <div class="xh-logo-sub">journal</div>
+          </div>
+
+          <nav class="xh-nav" aria-label="main navigation">
+            <button type="button" class="xh-nav-btn active">ژورنال</button>
+            <button type="button" class="xh-nav-btn">نمای کلی</button>
+          </nav>
+
+          <button id="newTradeBtn" type="button" class="action-btn">+ ثبت معامله</button>
+
+          <div class="xh-live-badge">
+            <span class="xh-live-dot"></span>
+            <span>Local-first sync</span>
+            <span class="xh-live-count">online</span>
+          </div>
+        </header>
+
+        <main class="xh-body">
+          <div class="summary-grid" id="summaryGrid"></div>
+
+          <div class="calendar-wrap">
+            <section class="xh-glass panel">
+              <div class="month-header">
+                <button id="prevMonthBtn" aria-label="ماه قبل">‹</button>
+                <strong id="monthLabel">ماه</strong>
+                <button id="nextMonthBtn" aria-label="ماه بعد">›</button>
+              </div>
+              <div class="days-grid" id="calendarGrid"></div>
+            </section>
+
+            <aside class="xh-glass panel">
+              <div class="detail-head">
+                <strong id="selectedDayLabel">روز</strong>
+                <span id="selectedDayPnl" class="trade-pnl"></span>
+              </div>
+              <div id="selectedDayTrades" class="detail-card"></div>
+            </aside>
+          </div>
+
+          <form id="tradeForm" class="xh-glass xh-form-panel" style="display: none;">
+            <div class="submit-form">
+              <input type="hidden" id="tradeId" />
+
+              <div class="field">
+                <label>روز ژورنال</label>
+                <input type="date" id="journalDate" required />
+              </div>
+
+              <div class="field">
+                <label>نام توکن</label>
+                <input type="text" id="token" required />
+              </div>
+
+              <div class="field">
+                <label>شبکه</label>
+                <select id="network">
+                  <option>Solana</option>
+                  <option>Ethereum</option>
+                  <option>Base</option>
+                  <option>BSC</option>
+                  <option>Arbitrum</option>
+                  <option>سایر</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label>وضعیت</label>
+                <select id="status">
+                  <option value="closed">بسته‌شده</option>
+                  <option value="open">باز</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label>مبلغ پوزیشن ($)</label>
+                <input type="number" id="investAmount" step="0.01" />
+              </div>
+
+              <div class="field">
+                <label>درصد سود/ضرر</label>
+                <input type="number" id="pnlPercent" step="0.01" />
+              </div>
+
+              <div class="field">
+                <label>مقدار دلاری</label>
+                <input type="number" id="pnlDollar" step="0.01" />
+              </div>
+
+              <div class="field">
+                <label>نتیجه</label>
+                <select id="pnlOutcome">
+                  <option value="profit">سود</option>
+                  <option value="loss">ضرر</option>
+                </select>
+              </div>
+
+              <div class="field" style="grid-column: 1 / -1;">
+                <label>یادداشت</label>
+                <textarea id="notes"></textarea>
+              </div>
+
+              <div class="field actions">
+                <button type="button" id="cancelFormBtn" class="mini-btn">انصراف</button>
+                <button type="submit" class="action-btn">ذخیره</button>
+              </div>
+            </div>
+          </form>
+        </main>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
