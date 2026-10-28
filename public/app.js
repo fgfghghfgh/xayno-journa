@@ -60,7 +60,12 @@ async function changeJournalAccessKey() {
     promptForAccessKey();
     updateSyncStatus(false);
     const response = await apiFetch('/api/trades');
-    if (!response.ok) throw new Error('کلید پذیرفته نشد؛ مقدار JOURNAL_ACCESS_KEY در Render را بررسی کن.');
+    if (response.status === 401) throw new Error('کلید دسترسی رد شد؛ مقدار JOURNAL_ACCESS_KEY در Render را بررسی کن.');
+    if (response.status === 503) {
+      const details = await response.json().catch(() => ({}));
+      throw new Error(details.message || 'اتصال دیتابیس برقرار نشد؛ جدول journal_trades را در Supabase بررسی کن.');
+    }
+    if (!response.ok) throw new Error(`خطای سرور (${response.status}).`);
     const payload = await response.json();
     if (!Array.isArray(payload.trades)) throw new Error('دریافت معاملات کامل نشد.');
     state.trades = payload.trades;
