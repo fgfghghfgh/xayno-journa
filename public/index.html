@@ -404,6 +404,123 @@
 
       .day-percent-empty { visibility: hidden; }
 
+      .journal-chart-controls,
+      .journal-chart-toolbar,
+      .journal-chart-tool-settings {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+
+      .journal-chart-controls {
+        padding: 8px;
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 7px;
+        background: rgba(255,255,255,0.025);
+      }
+
+      .journal-chart-controls label,
+      .chart-tool-field {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--text-dim);
+        font-size: 10px;
+      }
+
+      .journal-chart-controls input,
+      .journal-chart-controls select,
+      .journal-chart-tool-settings input,
+      .journal-chart-tool-settings select {
+        min-height: 28px;
+        padding: 4px 6px;
+        border: 1px solid rgba(255,255,255,0.11);
+        border-radius: 5px;
+        background: #151d21;
+        color: var(--text);
+        font: inherit;
+      }
+
+      .journal-chart-toolbar {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding: 5px 2px;
+      }
+
+      .journal-chart-toolbar button,
+      .journal-chart-controls button,
+      .journal-chart-tool-settings button {
+        flex: 0 0 auto;
+        min-height: 30px;
+        padding: 5px 8px;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 5px;
+        background: rgba(255,255,255,0.035);
+        color: var(--text-muted);
+        cursor: pointer;
+        font: inherit;
+        font-size: 10px;
+      }
+
+      .journal-chart-toolbar button { min-width: 34px; font-size: 14px; }
+      .journal-chart-toolbar button:hover,
+      .journal-chart-toolbar button.active { border-color: rgba(0,212,245,0.45); color: var(--cyan); background: rgba(0,212,245,0.1); }
+      .journal-chart-controls button:disabled,
+      .journal-chart-toolbar button:disabled { opacity: .4; cursor: not-allowed; }
+      .journal-chart-toolbar button.chart-danger,
+      .journal-chart-tool-settings .chart-danger { border-color: rgba(255,74,107,.25); color: var(--red); }
+      .journal-chart-toolbar button.chart-save { border-color: rgba(0,245,160,.28); color: var(--green); }
+
+      .journal-chart-tool-settings {
+        min-height: 38px;
+        padding: 5px 8px;
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 6px;
+        background: rgba(255,255,255,0.02);
+      }
+
+      .chart-tool-selected { color: var(--cyan); font-size: 10px; font-weight: 700; }
+      .chart-tool-hint { color: var(--text-dim); font-size: 10px; }
+      .chart-text-field input { width: min(220px, 42vw); }
+
+      .chart-fib-modal {
+        position: absolute;
+        inset: 45px 12px 12px;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+        background: rgba(0,0,0,.68);
+        border-radius: 8px;
+      }
+      .chart-fib-modal section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        width: min(560px, 100%);
+        max-height: 100%;
+        padding: 12px;
+        border: 1px solid rgba(255,255,255,.13);
+        border-radius: 8px;
+        background: #11191d;
+      }
+      .chart-fib-modal header,
+      .chart-fib-modal footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .fib-level-list { display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+      .fib-level-row { display: grid; grid-template-columns: 24px 28px minmax(70px,1fr) 48px 56px; gap: 6px; align-items: center; min-height: 32px; }
+      .fib-level-row span { color: var(--text-dim); font: 10px var(--font-mono); direction: ltr; text-align: center; }
+
+      @media (max-width: 560px) {
+        .journal-chart-modal-section { padding: 9px !important; }
+        .journal-chart-controls { align-items: stretch; }
+        .journal-chart-controls label { flex: 1 1 42%; justify-content: space-between; }
+        .journal-chart-tool-settings { align-items: stretch; }
+        .chart-tool-field { flex: 1 1 42%; justify-content: space-between; }
+      }
+
       .badge-win { color: var(--green); }
       .badge-loss { color: var(--red); }
       .badge-open { color: var(--yellow); }
