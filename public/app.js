@@ -215,6 +215,17 @@ function closeJournalChart() {
   journalChartOverlayState = new Map();
   journalSelectedOverlayId = null;
   document.getElementById('journalChartModal')?.remove();
+  if (document.body.classList.contains('journal-chart-open')) {
+    const scrollY = Number(document.body.dataset.chartScrollY || 0);
+    document.body.classList.remove('journal-chart-open');
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.left = '';
+    document.body.style.right = '';
+    document.body.style.width = '';
+    delete document.body.dataset.chartScrollY;
+    window.scrollTo(0, scrollY);
+  }
 }
 
 function drawJournalOverlay(name) {
@@ -504,9 +515,17 @@ function openTradeChart(trade) {
   let selectionConfirmed = Boolean(existing?.candles?.length && existing.valueType === 'marketCap');
   const modal = document.createElement('div');
   modal.id = 'journalChartModal';
-  modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.82);';
+  const pageScrollY = window.scrollY;
+  document.body.dataset.chartScrollY = String(pageScrollY);
+  document.body.classList.add('journal-chart-open');
+  document.body.style.position = 'fixed';
+  document.body.style.top = `-${pageScrollY}px`;
+  document.body.style.left = '0';
+  document.body.style.right = '0';
+  document.body.style.width = '100%';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;width:100vw;height:100vh;height:100dvh;padding:0;overflow:hidden;overscroll-behavior:none;touch-action:none;background:#070b10;';
   modal.innerHTML = `<section class="journal-chart-modal-section" style="width:min(1100px,100%);height:min(760px,94vh);display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:#0d1418;color:#edf7f4;direction:rtl;font-family:Vazirmatn,Tahoma,sans-serif;">
-    <header style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} · ${escapeHtml(trade.address)}</strong><button type="button" data-close-chart style="padding:7px 10px;border:1px solid rgba(255,255,255,.15);border-radius:6px;background:#182126;color:#edf7f4">بستن</button></header>
+    <header class="journal-chart-header" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} · ${escapeHtml(trade.address)}</strong><div class="journal-chart-page-actions"><button type="button" data-chart-fullscreen title="فقط چارت" aria-label="نمایش فقط چارت">⛶</button><button type="button" data-close-chart title="خروج از چارت" aria-label="خروج از چارت">×</button></div></header>
     <div class="journal-chart-controls">
       <label>تایم‌فریم <select data-chart-timeframe><option value="5m">۵ دقیقه</option><option value="15m">۱۵ دقیقه</option></select></label>
       <label>از کندل <input data-chart-from type="number" min="1" value="1" style="width:70px"></label>
@@ -531,11 +550,12 @@ function openTradeChart(trade) {
         <div class="journal-chart-tool-settings" data-tool-settings-content></div>
       </section>
     </div>
-    <small style="color:#71817c">کندل‌ها و خطوط تحلیل در رکورد معامله ذخیره و با دستگاه دیگر همگام می‌شوند.</small>
+    <small class="journal-chart-footnote" style="color:#71817c">کندل‌ها و خطوط تحلیل در رکورد معامله ذخیره و با دستگاه دیگر همگام می‌شوند.</small>
   </section>`;
   document.body.append(modal);
   const pnlSummary = journalPnlSummary(trade);
   const pnlBanner = document.createElement('div');
+  pnlBanner.dataset.pnlBanner = '';
   pnlBanner.style.cssText = `display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:9px 12px;border:1px solid rgba(255,255,255,.09);border-radius:6px;background:rgba(255,255,255,.025);font-size:11px;color:#91a19c`;
   pnlBanner.innerHTML = `<strong style="color:${pnlSummary.positive ? '#00f5a0' : '#ff4a6b'}">PnL ${escapeHtml(pnlSummary.percent)} · ${escapeHtml(pnlSummary.dollar)}</strong><span style="color:#00f5a0">ورود ${Number.isFinite(pnlSummary.entry) && pnlSummary.entry > 0 ? '$' + pnlSummary.entry.toLocaleString('en-US') : '—'}</span><span style="color:#ff4a6b">خروج ${Number.isFinite(pnlSummary.exit) && pnlSummary.exit > 0 ? '$' + pnlSummary.exit.toLocaleString('en-US') : '—'}</span><span>محور: مارکت‌کپ</span>`;
   modal.querySelector('header').insertAdjacentElement('afterend', pnlBanner);
@@ -546,6 +566,16 @@ function openTradeChart(trade) {
   const status = modal.querySelector('[data-chart-status]');
   timeframeSelect.value = timeframe;
   modal.querySelector('[data-close-chart]').addEventListener('click', closeJournalChart);
+  const fullscreenButton = modal.querySelector('[data-chart-fullscreen]');
+  fullscreenButton.addEventListener('click', () => {
+    const chartOnly = modal.classList.toggle('is-chart-only');
+    fullscreenButton.textContent = chartOnly ? '⤢' : '⛶';
+    fullscreenButton.title = chartOnly ? 'بازگشت به ابزارهای چارت' : 'فقط چارت';
+    fullscreenButton.setAttribute('aria-label', fullscreenButton.title);
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+  });
   modal.querySelectorAll('[data-draw]').forEach((button) => button.addEventListener('click', () => drawJournalOverlay(button.dataset.draw)));
   modal.querySelector('[data-tool-shelf]').addEventListener('click', (event) => {
     const toggle = event.target.closest('[data-shelf-toggle]');
