@@ -192,7 +192,13 @@ app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
       headers: { 'x-chain': chain, 'x-api-key': BIRDEYE_API_KEY },
       signal: AbortSignal.timeout(12_000),
     });
-    if (!response.ok) return res.status(502).json({ message: `Birdeye چارت را دریافت نکرد (${response.status}).` });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      if (errorBody.toLowerCase().includes('compute units usage limit exceeded')) {
+        return res.status(503).json({ message: 'سهمیهٔ Compute Units کلید Birdeye تمام شده است. سهمیه را در حساب Birdeye بررسی کن یا پس از بازنشانی دوباره تلاش کن.' });
+      }
+      return res.status(502).json({ message: `Birdeye چارت را دریافت نکرد (${response.status}).` });
+    }
     const result = await response.json();
     const items = Array.isArray(result.data?.items) ? result.data.items : [];
     const candles = items.map((item) => ({
