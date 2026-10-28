@@ -203,6 +203,16 @@
         font-weight: 700;
       }
 
+      .sync-key-btn {
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 7px;
+        background: rgba(255,255,255,0.04);
+        color: var(--text-muted);
+        padding: 5px 8px;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
       @keyframes xh-pulse {
         0%, 100% { opacity: 1; transform: scale(1); }
         50% { opacity: 0.42; transform: scale(0.86); }
@@ -605,6 +615,7 @@
             <span class="xh-live-dot"></span>
             <span id="syncLabel">بررسی همگام‌سازی</span>
             <span id="syncState" class="xh-live-count">...</span>
+            <button type="button" id="syncKeyBtn" class="sync-key-btn">تنظیم کلید</button>
           </div>
         </header>
 

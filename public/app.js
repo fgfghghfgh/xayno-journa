@@ -49,6 +49,30 @@ async function apiFetch(url, options = {}) {
   return response;
 }
 
+async function changeJournalAccessKey() {
+  if (!state.remoteEnabled) {
+    window.alert('اتصال ابری هنوز در Render فعال نشده است.');
+    return;
+  }
+  localStorage.removeItem(ACCESS_KEY_STORAGE);
+  accessKey = '';
+  try {
+    promptForAccessKey();
+    updateSyncStatus(false);
+    const response = await apiFetch('/api/trades');
+    if (!response.ok) throw new Error('کلید پذیرفته نشد؛ مقدار JOURNAL_ACCESS_KEY در Render را بررسی کن.');
+    const payload = await response.json();
+    if (!Array.isArray(payload.trades)) throw new Error('دریافت معاملات کامل نشد.');
+    state.trades = payload.trades;
+    saveLocalTrades(state.trades);
+    renderAll();
+    updateSyncStatus(true);
+  } catch (error) {
+    updateSyncStatus(false);
+    window.alert(error.message);
+  }
+}
+
 function renderImagePreviews() {
   imagePreviews.replaceChildren(...state.formImages.map((source, index) => {
     const wrapper = document.createElement('div');
@@ -498,6 +522,8 @@ document.getElementById('newTradeBtn').addEventListener('click', () => {
   resetForm();
   openTradeForm();
 });
+
+document.getElementById('syncKeyBtn').addEventListener('click', changeJournalAccessKey);
 
 document.getElementById('cancelFormBtn').addEventListener('click', () => {
   tradeForm.style.display = 'none';
