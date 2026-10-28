@@ -187,6 +187,43 @@
         box-shadow: 0 4px 18px rgba(0,0,0,0.18);
         font-size: 13px;
       }
+      .push-enable-btn {
+        border: 1px solid rgba(0,245,160,.28);
+        border-radius: 999px;
+        padding: 8px 12px;
+        color: var(--green);
+        background: linear-gradient(135deg, rgba(0,245,160,.12), rgba(0,212,245,.08));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 4px 16px rgba(0,245,160,.08);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .push-enable-btn:disabled { opacity: .65; cursor: default; }
+      .push-toast {
+        position: fixed;
+        z-index: 12000;
+        top: 16px;
+        right: 50%;
+        transform: translateX(50%) translateY(-14px);
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        width: min(440px, calc(100vw - 28px));
+        padding: 13px 15px;
+        border: 1px solid rgba(0,245,160,.36);
+        border-radius: 14px;
+        color: var(--text);
+        background: linear-gradient(115deg, rgba(5,25,20,.98), rgba(8,27,34,.98));
+        box-shadow: 0 16px 46px rgba(0,0,0,.48), 0 0 24px rgba(0,245,160,.12);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .22s ease, transform .22s ease;
+      }
+      .push-toast[hidden] { display: none; }
+      .push-toast.visible { opacity: 1; transform: translateX(50%) translateY(0); }
+      .push-toast-mark { display:grid; place-items:center; flex:0 0 34px; height:34px; border-radius:10px; color:#04170f; background:linear-gradient(135deg,var(--green),var(--cyan)); font-weight:900; }
+      .push-toast-copy { min-width:0; display:grid; gap:1px; }
+      .push-toast-copy strong { color:var(--green); font-size:12px; }
+      .push-toast-copy span { overflow:hidden; color:var(--text-muted); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
 
       .xh-live-dot {
         display: inline-block;
@@ -750,6 +787,7 @@
         .overview-grid { grid-template-columns: 1fr; }
         .overview-recent { grid-column: auto; }
         .overview-heading { align-items: start; flex-direction: column; }
+        .push-enable-btn { padding: 7px 9px; font-size: 11px; }
         body {
           padding: 10px;
         }
@@ -788,6 +826,11 @@
           </nav>
 
           <button id="newTradeBtn" type="button" class="action-btn">+ ثبت معامله</button>
+          <button type="button" id="pushEnableBtn" class="push-enable-btn" hidden>فعال‌سازی اعلان</button>
+    <div id="pushToast" class="push-toast" role="status" aria-live="polite" hidden>
+      <span class="push-toast-mark" aria-hidden="true">X</span>
+      <span class="push-toast-copy"><strong>ژورنال جدید ثبت شد</strong><span data-push-toast-body></span></span>
+    </div>
 
           <div class="xh-live-badge">
             <span class="xh-live-dot"></span>

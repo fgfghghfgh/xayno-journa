@@ -23,11 +23,14 @@ const saveStatus = document.getElementById('saveStatus');
 const imagePreviews = document.getElementById('imagePreviews');
 const syncLabel = document.getElementById('syncLabel');
 const syncState = document.getElementById('syncState');
+const pushEnableButton = document.getElementById('pushEnableBtn');
+const pushToast = document.getElementById('pushToast');
 const overviewView = document.getElementById('overviewView');
 const calendarWrap = document.querySelector('.calendar-wrap');
 const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
+let pushToastTimer = null;
 let activeJournalView = 'journal';
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
@@ -706,6 +709,71 @@ async function apiFetch(url, options = {}) {
   return response;
 }
 
+function showJournalToast(trade) {
+  if (!pushToast) return;
+  pushToast.querySelector('[data-push-toast-body]').textContent = trade?.token ? `${trade.token} به ژورنال اضافه شد` : 'یک ژورنال تازه ثبت شد';
+  pushToast.hidden = false;
+  requestAnimationFrame(() => pushToast.classList.add('visible'));
+  clearTimeout(pushToastTimer);
+  pushToastTimer = window.setTimeout(() => {
+    pushToast.classList.remove('visible');
+    window.setTimeout(() => { pushToast.hidden = true; }, 250);
+  }, 4200);
+}
+
+function decodePushKey(value) {
+  const padded = value + '='.repeat((4 - value.length % 4) % 4);
+  return Uint8Array.from(atob(padded.replace(/-/g, '+').replace(/_/g, '/')), (character) => character.charCodeAt(0));
+}
+
+async function setupJournalPush(config) {
+  if (!pushEnableButton || !config.pushEnabled || !config.pushPublicKey) return;
+  pushEnableButton.hidden = false;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    pushEnableButton.textContent = 'اعلان روی این مرورگر پشتیبانی نمی‌شود';
+    pushEnableButton.disabled = true;
+    return;
+  }
+  try {
+    const registration = await navigator.serviceWorker.register('/service-worker.js');
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      await apiFetch('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription) });
+      pushEnableButton.textContent = 'اعلان ژورنال فعال است';
+      pushEnableButton.disabled = true;
+    }
+  } catch (error) {
+    pushEnableButton.textContent = 'فعال‌سازی اعلان';
+  }
+}
+
+async function enableJournalPush() {
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !navigator.standalone) {
+    window.alert('برای اعلان در آیفون، ابتدا از منوی اشتراک‌گذاری Safari گزینهٔ «Add to Home Screen» را بزن و ژورنال را از صفحهٔ اصلی باز کن.');
+    return;
+  }
+  try {
+    pushEnableButton.disabled = true;
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('اجازهٔ اعلان داده نشد.');
+    const [configResponse, registration] = await Promise.all([
+      fetch('/api/config').then((response) => response.json()),
+      navigator.serviceWorker.register('/service-worker.js'),
+    ]);
+    if (!configResponse.pushEnabled || !configResponse.pushPublicKey) throw new Error('اعلان وب هنوز در سرور تنظیم نشده است.');
+    const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodePushKey(configResponse.pushPublicKey) });
+    const response = await apiFetch('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || 'ثبت اشتراک اعلان ناموفق بود.');
+    pushEnableButton.textContent = 'اعلان ژورنال فعال است';
+    showJournalToast({ token: 'اعلان‌ها فعال شدند' });
+  } catch (error) {
+    pushEnableButton.disabled = false;
+    pushEnableButton.textContent = 'فعال‌سازی دوبارهٔ اعلان';
+    window.alert(error.message || 'فعال‌سازی اعلان انجام نشد.');
+  }
+}
+
 async function changeJournalAccessKey() {
   if (!state.remoteEnabled) {
     window.alert('اتصال ابری هنوز در Render فعال نشده است.');
@@ -1224,6 +1292,7 @@ async function saveTrade(event) {
     resetForm();
     renderAll();
     updateSyncStatus(true);
+    if (existingIndex < 0) showJournalToast(payload.trade);
     if (payload.trade.address) window.setTimeout(() => openTradeChart(payload.trade), 0);
   } catch (error) {
     saveStatus.textContent = `${error.message}؛ فعلاً داده فقط در همین دستگاه نگه داشته شد و به دستگاه دیگر نرسیده است.`;
@@ -1273,6 +1342,7 @@ document.getElementById('cancelFormBtn').addEventListener('click', () => {
 });
 
 document.getElementById('tradeForm').addEventListener('submit', saveTrade);
+pushEnableButton?.addEventListener('click', enableJournalPush);
 document.getElementById('prevMonthBtn').addEventListener('click', () => {
   state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() - 1, 1);
   renderCalendar();
@@ -1287,6 +1357,7 @@ async function hydrateApp() {
     const configResponse = await fetch('/api/config');
     const config = await configResponse.json();
     state.remoteEnabled = Boolean(config.remoteEnabled);
+    setupJournalPush(config);
   } catch (error) {
     state.remoteEnabled = false;
   }

@@ -14,9 +14,22 @@ const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const JOURNAL_ACCESS_KEY = process.env.JOURNAL_ACCESS_KEY || '';
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || '';
+const WEB_PUSH_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || '';
+const WEB_PUSH_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || '';
+const WEB_PUSH_SUBJECT = process.env.WEB_PUSH_SUBJECT || 'mailto:notifications@xayno.app';
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
 const journalChartCache = new Map();
 const journalSupplyCache = new Map();
+const pushSubscriptions = new Map();
+let webPush = null;
+if (WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY) {
+  try {
+    webPush = require('web-push');
+    webPush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
+  } catch (error) {
+    console.error('Web Push is configured but web-push is unavailable.');
+  }
+}
 
 function requireJournalAccess(req, res, next) {
   if (!REMOTE_ENABLED) {
@@ -156,7 +169,7 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(PUBLIC_DIR));
 
 app.get('/api/config', (_req, res) => {
-  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true, chartEnabled: Boolean(BIRDEYE_API_KEY) });
+  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true, chartEnabled: Boolean(BIRDEYE_API_KEY), pushEnabled: Boolean(webPush), pushPublicKey: webPush ? WEB_PUSH_PUBLIC_KEY : '' });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -164,6 +177,83 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/trades', requireJournalAccess);
+
+app.post('/api/push/subscribe', requireJournalAccess, (req, res) => {
+  if (!webPush) return res.status(503).json({ message: 'اعلان وب هنوز در سرور تنظیم نشده است.' });
+  const subscription = req.body;
+  if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+    return res.status(400).json({ message: 'اطلاعات اشتراک اعلان معتبر نیست.' });
+  }
+  savePushSubscription(subscription).then(() => res.status(201).json({ ok: true }))
+    .catch(() => res.status(503).json({ message: 'ذخیرهٔ اشتراک اعلان ناموفق بود.' }));
+});
+
+app.post('/api/push/unsubscribe', requireJournalAccess, (req, res) => {
+  const endpoint = String(req.body?.endpoint || '');
+  removePushSubscription(endpoint).then(() => res.json({ ok: true }))
+    .catch(() => res.status(503).json({ message: 'لغو اشتراک اعلان ناموفق بود.' }));
+});
+
+async function savePushSubscription(subscription) {
+  if (!REMOTE_ENABLED) {
+    pushSubscriptions.set(subscription.endpoint, subscription);
+    return;
+  }
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/journal_push_subscriptions?on_conflict=endpoint`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify({ endpoint: subscription.endpoint, subscription }),
+  });
+  if (!response.ok) throw new Error('Push subscription storage failed.');
+}
+
+async function removePushSubscription(endpoint) {
+  if (!endpoint) return;
+  pushSubscriptions.delete(endpoint);
+  if (!REMOTE_ENABLED) return;
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/journal_push_subscriptions?endpoint=eq.${encodeURIComponent(endpoint)}`, {
+    method: 'DELETE',
+    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+  });
+  if (!response.ok) throw new Error('Push subscription removal failed.');
+}
+
+async function getPushSubscriptions() {
+  if (!REMOTE_ENABLED) return [...pushSubscriptions.entries()];
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/journal_push_subscriptions?select=endpoint,subscription`, {
+    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+  });
+  if (!response.ok) throw new Error('Push subscription read failed.');
+  return (await response.json()).map((row) => [row.endpoint, row.subscription]);
+}
+
+async function notifyNewJournal(trade) {
+  if (!webPush) return;
+  const subscriptions = await getPushSubscriptions();
+  if (!subscriptions.length) return;
+  const notification = JSON.stringify({
+    title: 'ژورنال جدید ثبت شد',
+    body: `${trade.token}${trade.entryMarketCap ? ` · ورود ${trade.entryMarketCap}` : ''}`,
+    tag: `xayno-journal-${trade.id}`,
+    url: '/',
+    icon: '/notification-icon.png',
+    badge: '/notification-badge.png',
+    data: { tradeId: trade.id },
+  });
+  await Promise.all(subscriptions.map(async ([endpoint, subscription]) => {
+    try {
+      await webPush.sendNotification(subscription, notification, { TTL: 60 * 60 });
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) await removePushSubscription(endpoint).catch(() => {});
+      else console.error(`Web Push delivery failed (${error.statusCode || 'unknown'}).`);
+    }
+  }));
+}
 
 async function fetchCirculatingSupply(address, chain) {
   const cacheKey = `${chain}:${address}`;
@@ -288,8 +378,10 @@ app.get('/api/summary', requireJournalAccess, (_req, res) => {
 app.post('/api/trades', async (req, res) => {
   const payload = req.body || {};
   const trades = readTrades();
+  const requestedId = String(payload.id || '');
+  const isNewJournal = !requestedId || !trades.some((item) => item.id === requestedId);
   const trade = {
-    id: payload.id || `trade_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+    id: requestedId || `trade_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
     status: payload.status || 'closed',
     token: String(payload.token || '').trim(),
     network: payload.network || 'Solana',
@@ -332,6 +424,7 @@ app.post('/api/trades', async (req, res) => {
     }
   }
 
+  if (isNewJournal) notifyNewJournal(trade).catch(() => {});
   res.status(201).json({ trade, summary: buildSummary(nextTrades) });
 });
 

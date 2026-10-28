@@ -6,5 +6,7 @@
   "background_color": "#0b1013",
   "theme_color": "#0b1013",
   "description": "XAYNO trading journal calendar and summary",
-  "icons": []
+  "icons": [
+    { "src": "/xayno-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
 }
