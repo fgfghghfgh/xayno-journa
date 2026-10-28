@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -9,55 +10,72 @@ const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
 const DATA_FILE = path.join(ROOT, 'data', 'trades.json');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const REMOTE_ENABLED = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
+const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const JOURNAL_ACCESS_KEY = process.env.JOURNAL_ACCESS_KEY || '';
+const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
 
-async function fetchRemoteTrades() {
-  if (!REMOTE_ENABLED) return null;
-  try {
-    const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/trades?select=*`, {
-      headers: {
-        apikey: process.env.SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
-      },
-    });
-    if (!response.ok) return null;
-    const rows = await response.json();
-    return Array.isArray(rows) ? rows : [];
-  } catch (error) {
-    return null;
+function requireJournalAccess(req, res, next) {
+  if (!REMOTE_ENABLED) {
+    if (process.env.RENDER) return res.status(503).json({ message: 'Online journal storage is not configured.' });
+    return next();
   }
+
+  const supplied = String(req.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  const expectedBuffer = Buffer.from(JOURNAL_ACCESS_KEY);
+  const suppliedBuffer = Buffer.from(supplied);
+  const valid = expectedBuffer.length === suppliedBuffer.length
+    && require('crypto').timingSafeEqual(expectedBuffer, suppliedBuffer);
+  if (!valid) return res.status(401).json({ message: 'Journal access key is missing or incorrect.' });
+  next();
 }
 
-async function persistRemoteTrades(trades) {
-  if (!REMOTE_ENABLED) return false;
-  try {
-    const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/trades`, {
-      method: 'DELETE',
-      headers: {
-        apikey: process.env.SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
-        Prefer: 'resolution=merge-delete',
-      },
-    });
-    if (!response.ok) return false;
+async function fetchRemoteRecords() {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/journal_trades?select=id,updated_at,deleted,payload`, {
+    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+  });
+  if (!response.ok) throw new Error(`Cloud journal read failed (${response.status}).`);
+  return response.json();
+}
 
-    for (const trade of trades) {
-      const payload = { ...trade };
-      await fetch(`${process.env.SUPABASE_URL}/rest/v1/trades`, {
-        method: 'POST',
-        headers: {
-          apikey: process.env.SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify(payload),
+async function writeRemoteRecords(records) {
+  if (!records.length) return;
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/journal_trades?on_conflict=id`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(records),
+  });
+  if (!response.ok) throw new Error(`Cloud journal write failed (${response.status}).`);
+}
+
+function mergeJournalSync(remoteRecords, incomingTrades, incomingDeletions) {
+  const merged = new Map(remoteRecords.map((record) => [record.id, record]));
+  for (const trade of incomingTrades) {
+    if (!trade || !trade.id || !String(trade.token || '').trim()) continue;
+    const updatedAt = trade.updatedAt || trade.createdAt || new Date().toISOString();
+    const current = merged.get(String(trade.id));
+    if (!current || new Date(updatedAt).getTime() >= new Date(current.updated_at).getTime()) {
+      merged.set(String(trade.id), {
+        id: String(trade.id), updated_at: updatedAt, deleted: false, payload: trade,
       });
     }
-    return true;
-  } catch (error) {
-    return false;
   }
+  for (const deletion of incomingDeletions) {
+    if (!deletion || !deletion.id) continue;
+    const deletedAt = deletion.deletedAt || new Date().toISOString();
+    const current = merged.get(String(deletion.id));
+    if (!current || new Date(deletedAt).getTime() >= new Date(current.updated_at).getTime()) {
+      merged.set(String(deletion.id), {
+        id: String(deletion.id), updated_at: deletedAt, deleted: true, payload: {},
+      });
+    }
+  }
+  return [...merged.values()];
 }
 
 function ensureDataFile() {
@@ -73,7 +91,16 @@ function readTrades() {
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    const normalized = parsed.map((item, index) => {
+      const trade = item && typeof item === 'object' ? item : {};
+      if (trade.id) return trade;
+      const fingerprint = [trade.token, trade.journalDate, trade.openedAt, trade.createdAt, index].join('|');
+      const id = `legacy_${crypto.createHash('sha256').update(fingerprint).digest('hex').slice(0, 24)}`;
+      return { ...trade, id };
+    });
+    if (normalized.some((trade, index) => trade.id !== parsed[index]?.id)) writeTrades(normalized);
+    return normalized;
   } catch (error) {
     return [];
   }
@@ -126,29 +153,32 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(PUBLIC_DIR));
 
 app.get('/api/config', (_req, res) => {
-  res.json({ remoteEnabled: REMOTE_ENABLED });
+  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true });
 });
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString(), remoteEnabled: REMOTE_ENABLED });
 });
 
+app.use('/api/trades', requireJournalAccess);
+
 app.get('/api/trades', async (_req, res) => {
+  if (REMOTE_ENABLED) {
+    try {
+      const records = mergeJournalSync(await fetchRemoteRecords(), readTrades(), []);
+      await writeRemoteRecords(records);
+      const trades = records.filter((record) => !record.deleted).map((record) => ({ ...record.payload, id: record.payload.id || record.id }));
+      writeTrades(trades);
+      return res.json({ trades });
+    } catch (error) {
+      return res.status(503).json({ message: 'ارتباط با فضای ابری انجام نشد.' });
+    }
+  }
   const localTrades = readTrades();
-  if (!REMOTE_ENABLED) {
-    return res.json({ trades: localTrades.sort((a, b) => new Date(b.createdAt || b.openedAt || 0) - new Date(a.createdAt || a.openedAt || 0)) });
-  }
-
-  const remoteTrades = await fetchRemoteTrades();
-  if (remoteTrades && remoteTrades.length) {
-    writeTrades(remoteTrades);
-    return res.json({ trades: remoteTrades });
-  }
-
-  return res.json({ trades: localTrades });
+  return res.json({ trades: localTrades.sort((a, b) => new Date(b.createdAt || b.openedAt || 0) - new Date(a.createdAt || a.openedAt || 0)) });
 });
 
-app.get('/api/summary', (_req, res) => {
+app.get('/api/summary', requireJournalAccess, (_req, res) => {
   const trades = readTrades();
   res.json(buildSummary(trades));
 });
@@ -193,18 +223,34 @@ app.post('/api/trades', async (req, res) => {
   writeTrades(nextTrades);
 
   if (REMOTE_ENABLED) {
-    await persistRemoteTrades(nextTrades);
+    try {
+      await writeRemoteRecords([{ id: trade.id, updated_at: trade.updatedAt, deleted: false, payload: trade }]);
+    } catch (error) {
+      return res.status(503).json({ message: 'ذخیره در فضای ابری ناموفق بود. دوباره تلاش کن.' });
+    }
   }
 
   res.status(201).json({ trade, summary: buildSummary(nextTrades) });
 });
 
 app.post('/api/trades/sync', async (req, res) => {
-  const incoming = Array.isArray(req.body) ? req.body : [];
+  const incoming = Array.isArray(req.body) ? req.body : (Array.isArray(req.body.trades) ? req.body.trades : []);
+  const incomingDeletions = Array.isArray(req.body) ? [] : (Array.isArray(req.body.deleted) ? req.body.deleted : []);
+  if (REMOTE_ENABLED) {
+    try {
+      const merged = mergeJournalSync(await fetchRemoteRecords(), incoming, incomingDeletions);
+      await writeRemoteRecords(merged);
+      const active = merged.filter((record) => !record.deleted).map((record) => record.payload);
+      const deleted = merged.filter((record) => record.deleted).map((record) => ({ id: record.id, deletedAt: record.updated_at }));
+      writeTrades(active);
+      return res.json({ ok: true, trades: active, deleted });
+    } catch (error) {
+      return res.status(503).json({ message: 'همگام‌سازی با فضای ابری ناموفق بود.' });
+    }
+  }
   const current = readTrades();
   const merged = [...incoming, ...current.filter((item) => !incoming.some((candidate) => candidate.id === item.id))];
   writeTrades(merged);
-  if (REMOTE_ENABLED) await persistRemoteTrades(merged);
   res.json({ ok: true, trades: merged, summary: buildSummary(merged) });
 });
 
@@ -226,14 +272,28 @@ app.put('/api/trades/:id', (req, res) => {
 
   const nextTrades = [...trades.slice(0, index), nextTrade, ...trades.slice(index + 1)];
   writeTrades(nextTrades);
+  if (REMOTE_ENABLED) {
+    writeRemoteRecords([{ id, updated_at: nextTrade.updatedAt, deleted: false, payload: nextTrade }])
+      .then(() => res.json({ trade: nextTrade, summary: buildSummary(nextTrades) }))
+      .catch(() => res.status(503).json({ message: 'ذخیره در فضای ابری ناموفق بود.' }));
+    return;
+  }
   res.json({ trade: nextTrade, summary: buildSummary(nextTrades) });
 });
 
-app.delete('/api/trades/:id', (req, res) => {
+app.delete('/api/trades/:id', async (req, res) => {
   const id = req.params.id;
   const trades = readTrades();
   const nextTrades = trades.filter((trade) => trade.id !== id);
   writeTrades(nextTrades);
+  if (REMOTE_ENABLED) {
+    try {
+      const deletedAt = new Date().toISOString();
+      await writeRemoteRecords([{ id, updated_at: deletedAt, deleted: true, payload: {} }]);
+    } catch (error) {
+      return res.status(503).json({ message: 'حذف از فضای ابری ناموفق بود.' });
+    }
+  }
   res.json({ success: true, summary: buildSummary(nextTrades) });
 });
 

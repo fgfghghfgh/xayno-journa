@@ -534,6 +534,27 @@
         display: none;
       }
 
+      .image-previews {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .image-preview {
+        display: grid;
+        gap: 5px;
+        width: min(140px, 42vw);
+      }
+
+      .image-preview img,
+      .trade-item .image-previews img {
+        width: 100%;
+        height: 88px;
+        object-fit: cover;
+        border-radius: 6px;
+      }
+
       @media (max-width: 900px) {
         .calendar-wrap {
           grid-template-columns: 1fr;
@@ -551,6 +572,15 @@
 
         .xh-header {
           padding: 16px 18px;
+        }
+
+        .submit-form {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .field.actions {
+          position: sticky;
+          bottom: 4px;
         }
       }
     </style>
@@ -573,8 +603,8 @@
 
           <div class="xh-live-badge">
             <span class="xh-live-dot"></span>
-            <span>Local-first sync</span>
-            <span class="xh-live-count">online</span>
+            <span id="syncLabel">بررسی همگام‌سازی</span>
+            <span id="syncState" class="xh-live-count">...</span>
           </div>
         </header>
 
@@ -635,6 +665,31 @@
               </div>
 
               <div class="field">
+                <label>آدرس قرارداد</label>
+                <input type="text" id="address" />
+              </div>
+
+              <div class="field">
+                <label>زمان ورود</label>
+                <input type="datetime-local" id="openedAt" />
+              </div>
+
+              <div class="field">
+                <label>زمان خروج</label>
+                <input type="datetime-local" id="closedAt" />
+              </div>
+
+              <div class="field">
+                <label>مارکت‌کپ ورود ($)</label>
+                <input type="number" id="entryMarketCap" step="any" />
+              </div>
+
+              <div class="field">
+                <label>مارکت‌کپ خروج ($)</label>
+                <input type="number" id="exitMarketCap" step="any" />
+              </div>
+
+              <div class="field">
                 <label>مبلغ پوزیشن ($)</label>
                 <input type="number" id="investAmount" step="0.01" />
               </div>
@@ -657,9 +712,59 @@
                 </select>
               </div>
 
+              <div class="field">
+                <label>سطح ریسک</label>
+                <select id="riskLevel">
+                  <option value="low">کم</option>
+                  <option value="medium">متوسط</option>
+                  <option value="high">زیاد / پرریسک</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label>لینک تراکنش</label>
+                <input type="url" id="txLink" />
+              </div>
+
+              <div class="field">
+                <label>ستاپ / نوع ورود</label>
+                <input type="text" id="setup" />
+              </div>
+
+              <div class="field">
+                <label>چرا وارد شدم؟</label>
+                <textarea id="entryReason"></textarea>
+              </div>
+
+              <div class="field">
+                <label>چرا خارج شدم؟</label>
+                <textarea id="exitReason"></textarea>
+              </div>
+
+              <div class="field">
+                <label>حالت ذهنی</label>
+                <textarea id="emotion"></textarea>
+              </div>
+
+              <div class="field">
+                <label>اشتباه یا ریسک نادیده‌گرفته‌شده</label>
+                <textarea id="mistakes"></textarea>
+              </div>
+
+              <div class="field">
+                <label>درس معامله</label>
+                <textarea id="lesson"></textarea>
+              </div>
+
               <div class="field" style="grid-column: 1 / -1;">
                 <label>یادداشت</label>
                 <textarea id="notes"></textarea>
+              </div>
+
+              <div class="field" style="grid-column: 1 / -1;">
+                <label for="tradeImages">تصاویر معامله (حداکثر ۳ عکس)</label>
+                <input type="file" id="tradeImages" accept="image/*" multiple />
+                <div id="imagePreviews" class="image-previews"></div>
               </div>
 
               <div class="field actions">

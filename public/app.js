@@ -1,8 +1,11 @@
 const STORAGE_KEY = 'xayno-local-journal';
+const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
 const state = {
   trades: [],
   currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   selectedDate: new Date().toISOString().slice(0, 10),
+  formImages: [],
+  remoteEnabled: false,
 };
 
 const summaryGrid = document.getElementById('summaryGrid');
@@ -13,6 +16,92 @@ const selectedDayTrades = document.getElementById('selectedDayTrades');
 const selectedDayPnl = document.getElementById('selectedDayPnl');
 const tradeForm = document.getElementById('tradeForm');
 const saveStatus = document.getElementById('saveStatus');
+const imagePreviews = document.getElementById('imagePreviews');
+const syncLabel = document.getElementById('syncLabel');
+const syncState = document.getElementById('syncState');
+let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
+
+function updateSyncStatus(online) {
+  syncLabel.textContent = state.remoteEnabled ? 'همگام‌سازی ابری' : 'ذخیرهٔ محلی';
+  syncState.textContent = state.remoteEnabled ? (online ? 'متصل' : 'قطع') : 'فقط این دستگاه';
+  syncState.style.color = state.remoteEnabled && online ? 'var(--green)' : 'var(--yellow)';
+}
+
+function promptForAccessKey() {
+  const entered = window.prompt('برای مشاهده و همگام‌سازی ژورنال، کلید خصوصی ژورنال را وارد کن:');
+  if (!entered) throw new Error('برای دسترسی به ژورنال، کلید خصوصی لازم است.');
+  accessKey = entered.trim();
+  localStorage.setItem(ACCESS_KEY_STORAGE, accessKey);
+}
+
+async function apiFetch(url, options = {}) {
+  if (state.remoteEnabled && !accessKey) promptForAccessKey();
+  const headers = new Headers(options.headers || {});
+  if (state.remoteEnabled) headers.set('Authorization', `Bearer ${accessKey}`);
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401 && state.remoteEnabled) {
+    localStorage.removeItem(ACCESS_KEY_STORAGE);
+    accessKey = '';
+    promptForAccessKey();
+    headers.set('Authorization', `Bearer ${accessKey}`);
+    return fetch(url, { ...options, headers });
+  }
+  return response;
+}
+
+function renderImagePreviews() {
+  imagePreviews.replaceChildren(...state.formImages.map((source, index) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'image-preview';
+    const image = document.createElement('img');
+    image.src = source;
+    image.alt = `تصویر معامله ${index + 1}`;
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'mini-btn';
+    removeButton.textContent = 'حذف عکس';
+    removeButton.addEventListener('click', () => {
+      state.formImages.splice(index, 1);
+      renderImagePreviews();
+    });
+    wrapper.append(image, removeButton);
+    return wrapper;
+  }));
+}
+
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      const scale = Math.min(1, 1400 / Math.max(image.width, image.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(objectUrl);
+      resolve(canvas.toDataURL('image/jpeg', 0.72));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('خواندن یکی از تصاویر انجام نشد.'));
+    };
+    image.src = objectUrl;
+  });
+}
+
+document.getElementById('tradeImages').addEventListener('change', async (event) => {
+  const files = Array.from(event.target.files || []).slice(0, 3 - state.formImages.length);
+  try {
+    state.formImages.push(...await Promise.all(files.map(compressImage)));
+    renderImagePreviews();
+  } catch (error) {
+    saveStatus.textContent = error.message;
+    saveStatus.hidden = false;
+  } finally {
+    event.target.value = '';
+  }
+});
 
 function openTradeForm() {
   saveStatus.hidden = true;
@@ -36,7 +125,7 @@ function saveLocalTrades(trades) {
 
 async function fetchServerTrades() {
   try {
-    const response = await fetch('/api/trades');
+    const response = await apiFetch('/api/trades');
     if (!response.ok) throw new Error('api fail');
     const payload = await response.json();
     return Array.isArray(payload.trades) ? payload.trades : [];
@@ -45,12 +134,12 @@ async function fetchServerTrades() {
   }
 }
 
-async function syncLocalTradesToServer() {
+async function syncLocalTradesToServer(pendingTrades = readLocalTrades()) {
   try {
-    const response = await fetch('/api/trades/sync', {
+    const response = await apiFetch('/api/trades/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(readLocalTrades()),
+      body: JSON.stringify({ trades: pendingTrades, deleted: [] }),
     });
     if (!response.ok) return;
     const payload = await response.json();
@@ -58,9 +147,10 @@ async function syncLocalTradesToServer() {
       saveLocalTrades(payload.trades);
       state.trades = payload.trades;
       renderAll();
+      updateSyncStatus(true);
     }
   } catch (error) {
-    // Keep local-only mode when remote is unavailable.
+    updateSyncStatus(false);
   }
 }
 
@@ -71,6 +161,30 @@ function tradePnl(trade) {
   const pnlPct = Number(trade.pnlPercent);
   if (Number.isFinite(invest) && Number.isFinite(pnlPct)) return (invest * pnlPct) / 100;
   return 0;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character]);
+}
+
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function safeImageSource(value) {
+  if (/^data:image\/(?:jpeg|png|webp);base64,/i.test(value)) return value;
+  return safeExternalUrl(value);
 }
 
 function getTradeDateKey(trade) {
@@ -201,14 +315,28 @@ function renderSelectedDay() {
     return `
       <div class="trade-item">
         <div class="trade-row">
-          <span class="trade-token">${trade.token}</span>
+          <span class="trade-token">${escapeHtml(trade.token)}</span>
           <span class="trade-pnl" style="color:${color}">${trade.status === 'open' ? 'باز' : `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`}</span>
         </div>
-        <div class="trade-meta">${trade.network} • ${trade.status === 'closed' ? 'بسته' : 'باز'} • ${trade.investAmount ? '$' + Number(trade.investAmount).toFixed(2) : '—'}</div>
-        ${trade.notes ? `<div class="trade-meta">${trade.notes}</div>` : ''}
+        <div class="trade-meta">${escapeHtml(trade.network)} • ${trade.status === 'closed' ? 'بسته' : 'باز'} • ${trade.investAmount ? '$' + Number(trade.investAmount).toFixed(2) : '—'}</div>
+        ${trade.address ? `<div class="trade-meta">آدرس: ${escapeHtml(trade.address)}</div>` : ''}
+        ${trade.openedAt ? `<div class="trade-meta">ورود: ${escapeHtml(trade.openedAt)}</div>` : ''}
+        ${trade.closedAt ? `<div class="trade-meta">خروج: ${escapeHtml(trade.closedAt)}</div>` : ''}
+        ${trade.entryMarketCap ? `<div class="trade-meta">مارکت‌کپ ورود: $${escapeHtml(trade.entryMarketCap)}</div>` : ''}
+        ${trade.exitMarketCap ? `<div class="trade-meta">مارکت‌کپ خروج: $${escapeHtml(trade.exitMarketCap)}</div>` : ''}
+        ${trade.riskLevel ? `<div class="trade-meta">ریسک: ${escapeHtml(trade.riskLevel)}</div>` : ''}
+        ${safeExternalUrl(trade.txLink) ? `<div class="trade-meta"><a href="${escapeHtml(safeExternalUrl(trade.txLink))}" target="_blank" rel="noopener">لینک تراکنش</a></div>` : ''}
+        ${trade.setup ? `<div class="trade-meta">ستاپ: ${escapeHtml(trade.setup)}</div>` : ''}
+        ${trade.entryReason ? `<div class="trade-meta">دلیل ورود: ${escapeHtml(trade.entryReason)}</div>` : ''}
+        ${trade.exitReason ? `<div class="trade-meta">دلیل خروج: ${escapeHtml(trade.exitReason)}</div>` : ''}
+        ${trade.emotion ? `<div class="trade-meta">حالت ذهنی: ${escapeHtml(trade.emotion)}</div>` : ''}
+        ${trade.mistakes ? `<div class="trade-meta">اشتباه‌ها: ${escapeHtml(trade.mistakes)}</div>` : ''}
+        ${trade.lesson ? `<div class="trade-meta">درس: ${escapeHtml(trade.lesson)}</div>` : ''}
+        ${trade.notes ? `<div class="trade-meta">${escapeHtml(trade.notes)}</div>` : ''}
+        ${Array.isArray(trade.images) && trade.images.length ? `<div class="image-previews">${trade.images.map((image, index) => { const source = safeImageSource(image); return source ? `<img src="${escapeHtml(source)}" alt="تصویر معامله ${index + 1}" loading="lazy">` : ''; }).join('')}</div>` : ''}
         <div class="trade-actions">
-          <button class="mini-btn" data-edit="${trade.id}">ویرایش</button>
-          <button class="mini-btn" data-delete="${trade.id}">حذف</button>
+          <button class="mini-btn" data-edit="${escapeHtml(trade.id)}">ویرایش</button>
+          <button class="mini-btn" data-delete="${escapeHtml(trade.id)}">حذف</button>
         </div>
       </div>
     `;
@@ -229,11 +357,26 @@ function fillForm(trade) {
   document.getElementById('token').value = trade.token || '';
   document.getElementById('network').value = trade.network || 'Solana';
   document.getElementById('status').value = trade.status || 'closed';
+  document.getElementById('address').value = trade.address || '';
+  document.getElementById('openedAt').value = (trade.openedAt || '').slice(0, 16);
+  document.getElementById('closedAt').value = (trade.closedAt || '').slice(0, 16);
+  document.getElementById('entryMarketCap').value = trade.entryMarketCap ?? '';
+  document.getElementById('exitMarketCap').value = trade.exitMarketCap ?? '';
   document.getElementById('investAmount').value = trade.investAmount ?? '';
   document.getElementById('pnlPercent').value = trade.pnlPercent ?? '';
   document.getElementById('pnlDollar').value = trade.pnlDollar ?? '';
   document.getElementById('pnlOutcome').value = trade.pnlOutcome || 'profit';
+  document.getElementById('riskLevel').value = trade.riskLevel || 'high';
+  document.getElementById('txLink').value = trade.txLink || '';
+  document.getElementById('setup').value = trade.setup || '';
+  document.getElementById('entryReason').value = trade.entryReason || '';
+  document.getElementById('exitReason').value = trade.exitReason || '';
+  document.getElementById('emotion').value = trade.emotion || '';
+  document.getElementById('mistakes').value = trade.mistakes || '';
+  document.getElementById('lesson').value = trade.lesson || '';
   document.getElementById('notes').value = trade.notes || '';
+  state.formImages = Array.isArray(trade.images) ? [...trade.images].slice(0, 3) : [];
+  renderImagePreviews();
 }
 
 function openFormForEdit(id) {
@@ -247,6 +390,8 @@ function resetForm() {
   tradeForm.reset();
   document.getElementById('tradeId').value = '';
   document.getElementById('journalDate').value = state.selectedDate;
+  state.formImages = [];
+  renderImagePreviews();
   saveStatus.hidden = true;
 }
 
@@ -257,11 +402,25 @@ function getFormValues() {
     token: document.getElementById('token').value.trim(),
     network: document.getElementById('network').value,
     status: document.getElementById('status').value,
+    address: document.getElementById('address').value.trim(),
+    openedAt: document.getElementById('openedAt').value,
+    closedAt: document.getElementById('closedAt').value,
+    entryMarketCap: document.getElementById('entryMarketCap').value,
+    exitMarketCap: document.getElementById('exitMarketCap').value,
     investAmount: document.getElementById('investAmount').value === '' ? '' : Number(document.getElementById('investAmount').value),
     pnlPercent: document.getElementById('pnlPercent').value === '' ? '' : Number(document.getElementById('pnlPercent').value),
     pnlDollar: document.getElementById('pnlDollar').value === '' ? '' : Number(document.getElementById('pnlDollar').value),
     pnlOutcome: document.getElementById('pnlOutcome').value,
+    riskLevel: document.getElementById('riskLevel').value,
+    txLink: document.getElementById('txLink').value.trim(),
+    setup: document.getElementById('setup').value.trim(),
+    entryReason: document.getElementById('entryReason').value.trim(),
+    exitReason: document.getElementById('exitReason').value.trim(),
+    emotion: document.getElementById('emotion').value.trim(),
+    mistakes: document.getElementById('mistakes').value.trim(),
+    lesson: document.getElementById('lesson').value.trim(),
     notes: document.getElementById('notes').value.trim(),
+    images: state.formImages,
     createdAt: new Date().toISOString(),
   };
 }
@@ -288,7 +447,7 @@ async function saveTrade(event) {
   saveStatus.style.color = 'var(--text-muted)';
   saveStatus.hidden = false;
   try {
-    const response = await fetch('/api/trades', {
+    const response = await apiFetch('/api/trades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nextTrade),
@@ -304,12 +463,14 @@ async function saveTrade(event) {
     tradeForm.style.display = 'none';
     resetForm();
     renderAll();
+    updateSyncStatus(true);
   } catch (error) {
-    saveStatus.textContent = `${error.message} داده در همین دستگاه نگه داشته شد؛ اتصال اینترنت را بررسی کن و دوباره ذخیره بزن.`;
+    saveStatus.textContent = `${error.message}؛ فعلاً داده فقط در همین دستگاه نگه داشته شد و به دستگاه دیگر نرسیده است.`;
     saveStatus.style.color = 'var(--red)';
     saveLocalTrades([nextTrade, ...state.trades.filter((trade) => trade.id !== nextTrade.id)]);
     state.trades = readLocalTrades();
     renderAll();
+    updateSyncStatus(false);
   } finally {
     submitButton.disabled = false;
   }
@@ -317,7 +478,7 @@ async function saveTrade(event) {
 
 async function deleteTrade(id) {
   try {
-    const response = await fetch(`/api/trades/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const response = await apiFetch(`/api/trades/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('حذف از سرور انجام نشد.');
     state.trades = state.trades.filter((trade) => trade.id !== id);
     saveLocalTrades(state.trades);
@@ -354,18 +515,27 @@ document.getElementById('nextMonthBtn').addEventListener('click', () => {
 });
 
 async function hydrateApp() {
+  try {
+    const configResponse = await fetch('/api/config');
+    const config = await configResponse.json();
+    state.remoteEnabled = Boolean(config.remoteEnabled);
+  } catch (error) {
+    state.remoteEnabled = false;
+  }
+  updateSyncStatus(false);
+  const pendingLocalTrades = readLocalTrades();
   const serverTrades = await fetchServerTrades();
-  if (Array.isArray(serverTrades) && serverTrades.length) {
+  if (Array.isArray(serverTrades) && (serverTrades.length || state.remoteEnabled)) {
     state.trades = serverTrades;
     saveLocalTrades(serverTrades);
   } else {
-    state.trades = readLocalTrades();
+    state.trades = pendingLocalTrades;
   }
 
   state.selectedDate = new Date().toISOString().slice(0, 10);
   resetForm();
   renderAll();
-  syncLocalTradesToServer();
+  syncLocalTradesToServer(pendingLocalTrades);
 }
 
 hydrateApp();
