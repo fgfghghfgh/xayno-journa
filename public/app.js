@@ -32,19 +32,38 @@ let journalSelectedOverlayId = null;
 let journalCrosshair = { color: '#91a19c', width: 1, style: 'dashed' };
 
 const JOURNAL_CHART_TOOLS = [
-  { id: 'segment', label: 'خط روند', glyph: '╱' },
-  { id: 'longPosition', label: 'پوزیشن لانگ', glyph: '↗' },
-  { id: 'shortPosition', label: 'پوزیشن شورت', glyph: '↘' },
-  { id: 'horizontalStraightLine', label: 'خط افقی', glyph: '─' },
-  { id: 'horizontalRayLine', label: 'نیم‌خط افقی', glyph: '⟶' },
-  { id: 'verticalStraightLine', label: 'خط عمودی', glyph: '│' },
-  { id: 'fibonacciLine', label: 'فیبوناچی', glyph: 'F' },
-  { id: 'fibExtension', label: 'فیبوناچی گسترشی', glyph: 'FE' },
-  { id: 'drawPriceRange', label: 'محدوده قیمت', glyph: '↕' },
-  { id: 'drawRect', label: 'مستطیل', glyph: '□' },
-  { id: 'drawText', label: 'متن', glyph: 'T' },
-  { id: 'drawCross', label: 'علامت ضربدر', glyph: '×' },
+  { id: 'segment', label: 'خط روند', group: 'خطوط', icon: 'trend' },
+  { id: 'longPosition', label: 'پوزیشن لانگ', group: 'پوزیشن', icon: 'long' },
+  { id: 'shortPosition', label: 'پوزیشن شورت', group: 'پوزیشن', icon: 'short' },
+  { id: 'horizontalStraightLine', label: 'خط افقی', group: 'خطوط', icon: 'horizontal' },
+  { id: 'horizontalRayLine', label: 'نیم‌خط افقی', group: 'خطوط', icon: 'ray' },
+  { id: 'verticalStraightLine', label: 'خط عمودی', group: 'خطوط', icon: 'vertical' },
+  { id: 'fibonacciLine', label: 'فیبوناچی', group: 'فیبوناچی', icon: 'fib' },
+  { id: 'fibExtension', label: 'فیبوناچی گسترشی', group: 'فیبوناچی', icon: 'fib-extension' },
+  { id: 'drawPriceRange', label: 'محدوده قیمت', group: 'شکل و یادداشت', icon: 'range' },
+  { id: 'drawRect', label: 'مستطیل', group: 'شکل و یادداشت', icon: 'rectangle' },
+  { id: 'drawText', label: 'متن', group: 'شکل و یادداشت', icon: 'text' },
+  { id: 'drawCross', label: 'علامت ضربدر', group: 'شکل و یادداشت', icon: 'cross' },
 ];
+
+const JOURNAL_TOOL_ICON_PATHS = {
+  trend: '<path d="M4 19 19 4"/><circle cx="4" cy="19" r="1.5"/><circle cx="19" cy="4" r="1.5"/>',
+  horizontal: '<path d="M3 12h18"/><path d="m7 8-4 4 4 4m10-8 4 4-4 4"/>',
+  ray: '<path d="M3 12h17m-5-5 5 5-5 5"/>',
+  vertical: '<path d="M12 3v18"/><path d="m8 7 4-4 4 4m-8 10 4 4 4-4"/>',
+  fib: '<path d="M4 19 19 5M5 7h14M5 11h14M5 15h14M5 19h14"/>',
+  'fib-extension': '<path d="m3 18 6-10 5 5M14 13h7M14 8h7M14 18h7"/>',
+  long: '<path d="M6 20V4m0 0L2 8m4-4 4 4M14 17l4-4 4 4M18 13v7"/>',
+  short: '<path d="M6 4v16m0 0-4-4m4 4 4-4M14 7l4 4 4-4m-4 4V4"/>',
+  range: '<path d="M5 5h14v14H5zM8 9v6m4-8v10m4-8v6"/>',
+  rectangle: '<rect x="4" y="5" width="16" height="14" rx="1"/><path d="M8 5v14m8-14v14" opacity=".55"/>',
+  text: '<path d="M4 6h16M12 6v13m-4 0h8"/><path d="M7 3h10" opacity=".55"/>',
+  cross: '<path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="3"/>',
+};
+
+function journalToolIcon(icon) {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${JOURNAL_TOOL_ICON_PATHS[icon] || JOURNAL_TOOL_ICON_PATHS.trend}</g></svg>`;
+}
 
 const FIB_DEFAULT_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.65, 0.705, 0.786, 0.886, 1, 1.13, 1.272, 1.414, 1.618, 2, 2.272, 2.414, 2.618, 3, 3.618, 4.236];
 const FIB_RETRACE_CONFIG = FIB_DEFAULT_LEVELS.map((value) => ({ value, label: String(value), enabled: true, color: '#ff6b2b', size: 1 }));
@@ -238,10 +257,12 @@ function updateJournalOverlay(changes, redrawPanel = true) {
 function renderJournalToolPanel() {
   const panel = document.getElementById('journal-chart-tool-settings');
   if (!panel) return;
+  const content = panel.querySelector('[data-tool-settings-content]');
   if (!journalSelectedOverlayId || !journalChartInstance) {
-    panel.innerHTML = '<span class="chart-tool-hint">یک ابزار انتخاب کن یا روی یکی از خطوط بزن تا تنظیماتش باز شود.</span>';
+    panel.hidden = true;
     return;
   }
+  panel.hidden = false;
   const overlay = journalChartInstance.getOverlayById(journalSelectedOverlayId);
   if (!overlay) { panel.replaceChildren(); return; }
   const stateForOverlay = journalChartOverlayState.get(overlay.id) || { locked: false, hidden: false };
@@ -249,7 +270,8 @@ function renderJournalToolPanel() {
   const extendData = overlay.extendData || {};
   const isFib = overlay.name === 'fibonacciLine' || overlay.name === 'fibExtension';
   const isText = overlay.name === 'drawText';
-  panel.innerHTML = `<span class="chart-tool-selected">${escapeHtml(JOURNAL_CHART_TOOLS.find((tool) => tool.id === overlay.name)?.label || overlay.name)}</span>
+  const selectedTool = JOURNAL_CHART_TOOLS.find((tool) => tool.id === overlay.name);
+  content.innerHTML = `<span class="chart-tool-selected">${journalToolIcon(selectedTool?.icon)}${escapeHtml(selectedTool?.label || overlay.name)}</span>
     <label class="chart-tool-field">رنگ <input data-overlay-color type="color" value="${/^#[\da-f]{6}$/i.test(styles.color || '') ? styles.color : '#00d4f5'}"></label>
     <label class="chart-tool-field">ضخامت <select data-overlay-size>${[1, 1.5, 2, 3, 4].map((size) => `<option value="${size}" ${Number(styles.size || 1) === size ? 'selected' : ''}>${size}px</option>`).join('')}</select></label>
     <label class="chart-tool-field">خط <select data-overlay-style><option value="solid" ${styles.style === 'solid' ? 'selected' : ''}>پیوسته</option><option value="dashed" ${styles.style === 'dashed' ? 'selected' : ''}>چین‌چین</option><option value="dotted" ${styles.style === 'dotted' ? 'selected' : ''}>نقطه‌ای</option></select></label>
@@ -258,35 +280,63 @@ function renderJournalToolPanel() {
     <button type="button" data-overlay-lock>${stateForOverlay.locked ? 'بازکردن قفل' : 'قفل'}</button>
     <button type="button" data-overlay-hide>${stateForOverlay.hidden ? 'نمایش' : 'مخفی'}</button>
     <button type="button" data-overlay-delete class="chart-danger">حذف</button>`;
-  panel.querySelector('[data-overlay-color]').addEventListener('input', (event) => updateJournalOverlay({ styles: { line: { color: event.target.value } } }, false));
-  panel.querySelector('[data-overlay-color]').addEventListener('change', renderJournalToolPanel);
-  panel.querySelector('[data-overlay-size]').addEventListener('change', (event) => updateJournalOverlay({ styles: { line: { ...styles, size: Number(event.target.value) } } }));
-  panel.querySelector('[data-overlay-style]').addEventListener('change', (event) => updateJournalOverlay({ styles: { line: { ...styles, style: event.target.value } } }));
-  panel.querySelector('[data-overlay-lock]').addEventListener('click', () => {
+  content.querySelector('[data-overlay-color]').addEventListener('input', (event) => updateJournalOverlay({ styles: { line: { color: event.target.value } } }, false));
+  content.querySelector('[data-overlay-color]').addEventListener('change', renderJournalToolPanel);
+  content.querySelector('[data-overlay-size]').addEventListener('change', (event) => updateJournalOverlay({ styles: { line: { ...styles, size: Number(event.target.value) } } }));
+  content.querySelector('[data-overlay-style]').addEventListener('change', (event) => updateJournalOverlay({ styles: { line: { ...styles, style: event.target.value } } }));
+  content.querySelector('[data-overlay-lock]').addEventListener('click', () => {
     stateForOverlay.locked = !stateForOverlay.locked;
     journalChartOverlayState.set(overlay.id, stateForOverlay);
     journalChartInstance.overrideOverlay({ id: overlay.id, lock: stateForOverlay.locked });
     renderJournalToolPanel();
   });
-  panel.querySelector('[data-overlay-hide]').addEventListener('click', () => {
+  content.querySelector('[data-overlay-hide]').addEventListener('click', () => {
     stateForOverlay.hidden = !stateForOverlay.hidden;
     journalChartOverlayState.set(overlay.id, stateForOverlay);
     journalChartInstance.overrideOverlay({ id: overlay.id, visible: !stateForOverlay.hidden });
     renderJournalToolPanel();
   });
-  panel.querySelector('[data-overlay-delete]').addEventListener('click', () => journalChartInstance.removeOverlay({ id: overlay.id }));
+  content.querySelector('[data-overlay-delete]').addEventListener('click', () => journalChartInstance.removeOverlay({ id: overlay.id }));
   if (isText) {
-    const textInput = panel.querySelector('[data-overlay-text]');
-    const textSize = panel.querySelector('[data-text-size]');
+    const textInput = content.querySelector('[data-overlay-text]');
+    const textSize = content.querySelector('[data-text-size]');
     if (textInput) {
       textInput.addEventListener('change', (event) => updateJournalOverlay({ extendData: { text: event.target.value } }));
     }
     if (textSize) textSize.addEventListener('change', (event) => updateJournalOverlay({ extendData: { ...extendData, size: Number(event.target.value) } }));
   }
   if (isFib) {
-    panel.querySelector('[data-fib-direction]').addEventListener('change', (event) => updateJournalOverlay({ extendData: { ...extendData, fibDirection: event.target.value } }));
-    panel.querySelector('[data-fib-settings]').addEventListener('click', () => openJournalFibSettings(overlay));
+    content.querySelector('[data-fib-direction]').addEventListener('change', (event) => updateJournalOverlay({ extendData: { ...extendData, fibDirection: event.target.value } }));
+    content.querySelector('[data-fib-settings]').addEventListener('click', () => openJournalFibSettings(overlay));
   }
+}
+
+function enableJournalSettingsDrag(modal) {
+  const panel = modal.querySelector('#journal-chart-tool-settings');
+  const handle = panel.querySelector('[data-settings-drag]');
+  const workspace = modal.querySelector('[data-chart-workspace]');
+  let drag = null;
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('[data-settings-close]')) return;
+    const panelRect = panel.getBoundingClientRect();
+    const workspaceRect = workspace.getBoundingClientRect();
+    drag = { pointerId: event.pointerId, x: event.clientX - panelRect.left, y: event.clientY - panelRect.top, workspace: workspaceRect };
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  handle.addEventListener('pointermove', (event) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const maxLeft = Math.max(0, drag.workspace.width - panel.offsetWidth);
+    const maxTop = Math.max(0, drag.workspace.height - panel.offsetHeight);
+    panel.style.left = `${Math.max(0, Math.min(maxLeft, event.clientX - drag.workspace.left - drag.x))}px`;
+    panel.style.top = `${Math.max(0, Math.min(maxTop, event.clientY - drag.workspace.top - drag.y))}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  });
+  const stop = (event) => { if (drag?.pointerId === event.pointerId) drag = null; };
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+  panel.querySelector('[data-settings-close]').addEventListener('click', () => { panel.hidden = true; });
 }
 
 function openJournalFibSettings(overlay) {
@@ -408,16 +458,25 @@ function openTradeChart(trade) {
       <label class="chart-tool-field">رنگ صلیب‌نما <input data-crosshair-color type="color" value="${journalCrosshair.color}"></label>
       <label class="chart-tool-field">ضخامت صلیب‌نما <select data-crosshair-width><option value="1" ${journalCrosshair.width === 1 ? 'selected' : ''}>۱px</option><option value="2" ${journalCrosshair.width === 2 ? 'selected' : ''}>۲px</option><option value="3" ${journalCrosshair.width === 3 ? 'selected' : ''}>۳px</option></select></label>
       <label class="chart-tool-field">خط صلیب‌نما <select data-crosshair-style><option value="solid" ${journalCrosshair.style === 'solid' ? 'selected' : ''}>پیوسته</option><option value="dashed" ${journalCrosshair.style === 'dashed' ? 'selected' : ''}>چین‌چین</option><option value="dotted" ${journalCrosshair.style === 'dotted' ? 'selected' : ''}>نقطه‌ای</option></select></label>
-        <button type="button" data-clear-drawings class="chart-danger" ${selectionConfirmed ? '' : 'disabled'}>پاک‌کردن ترسیم‌ها</button>
+      <button type="button" data-clear-drawings class="chart-danger" ${selectionConfirmed ? '' : 'disabled'}>پاک‌کردن ترسیم‌ها</button>
       <button type="button" data-save-chart ${selectionConfirmed ? '' : 'disabled'} class="chart-save">ذخیره چارت</button>
     </div>
-    <nav class="journal-chart-toolbar" aria-label="ابزارهای ترسیم">${JOURNAL_CHART_TOOLS.map((tool) => `<button type="button" data-draw="${tool.id}" title="${tool.label}" aria-label="${tool.label}" ${selectionConfirmed ? '' : 'disabled'}>${tool.glyph}</button>`).join('')}</nav>
-    <div id="journal-chart-tool-settings" class="journal-chart-tool-settings"><span class="chart-tool-hint">یک ابزار انتخاب کن یا روی یکی از خطوط بزن تا تنظیماتش باز شود.</span></div>
     <div data-chart-status style="min-height:18px;color:#91a19c;font-size:11px"></div>
-    <div id="journal-chart-canvas" style="flex:1;min-height:300px;width:100%"></div>
+    <div class="journal-chart-workspace" data-chart-workspace>
+      <aside class="journal-tool-shelf" data-tool-shelf>
+        <div class="journal-shelf-head"><span class="journal-shelf-title">ابزارهای ترسیم</span><button type="button" class="journal-shelf-toggle" data-shelf-toggle title="جمع‌کردن پنل ابزارها" aria-label="جمع‌کردن پنل ابزارها">‹</button></div>
+        <div class="journal-shelf-body">${['خطوط', 'فیبوناچی', 'پوزیشن', 'شکل و یادداشت'].map((group) => `<div class="journal-tool-group"><strong>${group}</strong>${JOURNAL_CHART_TOOLS.filter((tool) => tool.group === group).map((tool) => `<button type="button" class="journal-shelf-tool" data-draw="${tool.id}" title="${tool.label}" aria-label="${tool.label}" ${selectionConfirmed ? '' : 'disabled'}>${journalToolIcon(tool.icon)}<span>${tool.label}</span></button>`).join('')}</div>`).join('')}</div>
+      </aside>
+      <div id="journal-chart-canvas"></div>
+      <section id="journal-chart-tool-settings" class="journal-floating-settings" hidden>
+        <header class="journal-settings-drag" data-settings-drag><span>${journalToolIcon('trend')}<span>تنظیمات ترسیم</span></span><button type="button" data-settings-close title="بستن پنل" aria-label="بستن پنل">×</button></header>
+        <div class="journal-chart-tool-settings" data-tool-settings-content></div>
+      </section>
+    </div>
     <small style="color:#71817c">کندل‌ها و خطوط تحلیل در رکورد معامله ذخیره و با دستگاه دیگر همگام می‌شوند.</small>
   </section>`;
   document.body.append(modal);
+  enableJournalSettingsDrag(modal);
   const timeframeSelect = modal.querySelector('[data-chart-timeframe]');
   const fromInput = modal.querySelector('[data-chart-from]');
   const toInput = modal.querySelector('[data-chart-to]');
@@ -425,6 +484,18 @@ function openTradeChart(trade) {
   timeframeSelect.value = timeframe;
   modal.querySelector('[data-close-chart]').addEventListener('click', closeJournalChart);
   modal.querySelectorAll('[data-draw]').forEach((button) => button.addEventListener('click', () => drawJournalOverlay(button.dataset.draw)));
+  modal.querySelector('[data-tool-shelf]').addEventListener('click', (event) => {
+    const toggle = event.target.closest('[data-shelf-toggle]');
+    if (toggle) {
+      const collapsed = modal.querySelector('[data-tool-shelf]').classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '›' : '‹';
+      toggle.title = collapsed ? 'بازکردن پنل ابزارها' : 'جمع‌کردن پنل ابزارها';
+      toggle.setAttribute('aria-label', toggle.title);
+      return;
+    }
+    const button = event.target.closest('[data-draw]');
+    if (button) modal.querySelectorAll('[data-draw]').forEach((item) => item.classList.toggle('active', item === button));
+  });
   modal.querySelector('[data-clear-drawings]').addEventListener('click', clearJournalDrawings);
   const updateCrosshair = () => {
     journalCrosshair = { color: modal.querySelector('[data-crosshair-color]').value, width: Number(modal.querySelector('[data-crosshair-width]').value), style: modal.querySelector('[data-crosshair-style]').value };
