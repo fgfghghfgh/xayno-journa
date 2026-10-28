@@ -20,6 +20,7 @@ const imagePreviews = document.getElementById('imagePreviews');
 const syncLabel = document.getElementById('syncLabel');
 const syncState = document.getElementById('syncState');
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
+let syncInProgress = false;
 
 function updateSyncStatus(online) {
   syncLabel.textContent = state.remoteEnabled ? 'همگام‌سازی ابری' : 'ذخیرهٔ محلی';
@@ -164,13 +165,18 @@ async function fetchServerTrades() {
 }
 
 async function syncLocalTradesToServer(pendingTrades = readLocalTrades()) {
+  if (syncInProgress) return;
+  syncInProgress = true;
   try {
     const response = await apiFetch('/api/trades/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ trades: pendingTrades, deleted: [] }),
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      updateSyncStatus(false);
+      return;
+    }
     const payload = await response.json();
     if (Array.isArray(payload.trades)) {
       saveLocalTrades(payload.trades);
@@ -180,12 +186,14 @@ async function syncLocalTradesToServer(pendingTrades = readLocalTrades()) {
     }
   } catch (error) {
     updateSyncStatus(false);
+  } finally {
+    syncInProgress = false;
   }
 }
 
 function tradePnl(trade) {
-  const pnlDollar = Number(trade.pnlDollar);
-  if (Number.isFinite(pnlDollar)) return pnlDollar;
+  const hasPnlDollar = trade.pnlDollar !== '' && trade.pnlDollar != null && Number.isFinite(Number(trade.pnlDollar));
+  if (hasPnlDollar) return Number(trade.pnlDollar);
   const invest = Number(trade.investAmount);
   const pnlPct = Number(trade.pnlPercent);
   if (Number.isFinite(invest) && Number.isFinite(pnlPct)) return (invest * pnlPct) / 100;
@@ -567,6 +575,12 @@ async function hydrateApp() {
   resetForm();
   renderAll();
   syncLocalTradesToServer(pendingLocalTrades);
+  window.setInterval(() => {
+    if (!document.hidden) syncLocalTradesToServer();
+  }, 20000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncLocalTradesToServer();
+  });
 }
 
 hydrateApp();
