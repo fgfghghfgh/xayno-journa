@@ -251,11 +251,32 @@
         color: var(--text);
       }
 
+      .overview-view[hidden] { display: none !important; }
+      .overview-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin: 4px 0 16px; }
+      .overview-heading span { color: var(--text-dim); font-size: 11px; }
+      .overview-heading h2 { margin: 3px 0 0; color: var(--text); font-size: 19px; }
+      .overview-period { padding-bottom: 3px; }
+      .overview-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+      .overview-block { min-width: 0; padding: 16px 18px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(15,23,27,.72); }
+      .overview-block h3 { margin: 0 0 12px; color: var(--text-muted); font-size: 12px; }
+      .overview-stat, .overview-trade { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 38px; border-top: 1px solid rgba(255,255,255,.06); }
+      .overview-stat span, .overview-trade span { color: var(--text-dim); font-size: 11px; }
+      .overview-stat strong, .overview-trade > strong { direction: ltr; font-size: 12px; }
+      .overview-recent { grid-column: 1 / -1; }
+      .overview-list { display: flex; flex-direction: column; }
+      .overview-trade > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .overview-trade > div strong { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+      .overview-empty { padding: 12px 0; color: var(--text-dim); font-size: 11px; }
+      .overview-view .positive { color: var(--green); }
+      .overview-view .negative { color: var(--red); }
+      .overview-view .neutral { color: var(--yellow); }
+
       .calendar-wrap {
         display: grid;
         grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.9fr);
         gap: 18px;
       }
+      .calendar-wrap[hidden] { display: none !important; }
 
       .xh-glass {
         border-radius: 22px;
@@ -726,6 +747,9 @@
       }
 
       @media (max-width: 640px) {
+        .overview-grid { grid-template-columns: 1fr; }
+        .overview-recent { grid-column: auto; }
+        .overview-heading { align-items: start; flex-direction: column; }
         body {
           padding: 10px;
         }
@@ -759,8 +783,8 @@
           </div>
 
           <nav class="xh-nav" aria-label="main navigation">
-            <button type="button" class="xh-nav-btn active">ژورنال</button>
-            <button type="button" class="xh-nav-btn">نمای کلی</button>
+            <button type="button" class="xh-nav-btn active" data-journal-view="journal">ژورنال</button>
+            <button type="button" class="xh-nav-btn" data-journal-view="overview">نمای کلی</button>
           </nav>
 
           <button id="newTradeBtn" type="button" class="action-btn">+ ثبت معامله</button>
@@ -775,6 +799,8 @@
 
         <main class="xh-body">
           <div class="summary-grid" id="summaryGrid"></div>
+
+          <section id="overviewView" class="overview-view" hidden></section>
 
           <div class="calendar-wrap">
             <section class="xh-glass panel">

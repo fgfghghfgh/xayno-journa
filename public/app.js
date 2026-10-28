@@ -23,8 +23,12 @@ const saveStatus = document.getElementById('saveStatus');
 const imagePreviews = document.getElementById('imagePreviews');
 const syncLabel = document.getElementById('syncLabel');
 const syncState = document.getElementById('syncState');
+const overviewView = document.getElementById('overviewView');
+const calendarWrap = document.querySelector('.calendar-wrap');
+const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
+let activeJournalView = 'journal';
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
 let journalChartOverlayState = new Map();
@@ -865,6 +869,42 @@ function renderSummary() {
   `).join('');
 }
 
+function renderOverview() {
+  if (!overviewView) return;
+  const closed = state.trades.filter((trade) => trade.status === 'closed');
+  const networkRows = Object.entries(closed.reduce((groups, trade) => {
+    const name = String(trade.network || 'سایر').trim() || 'سایر';
+    if (!groups[name]) groups[name] = { count: 0, pnl: 0, wins: 0 };
+    groups[name].count += 1;
+    groups[name].pnl += tradePnl(trade);
+    if (tradePnl(trade) > 0) groups[name].wins += 1;
+    return groups;
+  }, {})).sort((left, right) => right[1].pnl - left[1].pnl);
+  const recent = [...state.trades].sort((left, right) => getTradeDateKey(right).localeCompare(getTradeDateKey(left))).slice(0, 6);
+  const average = closed.length ? closed.reduce((sum, trade) => sum + tradePnl(trade), 0) / closed.length : 0;
+  overviewView.innerHTML = `
+    <div class="overview-heading"><div><span>گزارش عملکرد</span><h2>نمای کلی معاملات</h2></div><span class="overview-period">${closed.length} معاملهٔ بسته · ${state.trades.filter((trade) => trade.status === 'open').length} معاملهٔ باز</span></div>
+    <div class="overview-grid">
+      <section class="overview-block"><h3>عملکرد کلی</h3><div class="overview-stat"><span>میانگین سود/ضرر هر معامله</span><strong class="${average >= 0 ? 'positive' : 'negative'}">${average >= 0 ? '+' : '-'}$${Math.abs(average).toFixed(2)}</strong></div><div class="overview-stat"><span>بیشترین سود</span><strong class="positive">${closed.length ? '+$' + Math.max(...closed.map(tradePnl)).toFixed(2) : '—'}</strong></div><div class="overview-stat"><span>بیشترین ضرر</span><strong class="negative">${closed.length ? '-$' + Math.abs(Math.min(...closed.map(tradePnl))).toFixed(2) : '—'}</strong></div></section>
+      <section class="overview-block"><h3>عملکرد بر اساس شبکه</h3>${networkRows.length ? networkRows.map(([name, value]) => `<div class="overview-stat"><span>${escapeHtml(name)} · ${value.count} معامله</span><strong class="${value.pnl >= 0 ? 'positive' : 'negative'}">${value.pnl >= 0 ? '+' : '-'}$${Math.abs(value.pnl).toFixed(2)}</strong></div>`).join('') : '<div class="overview-empty">هنوز معاملهٔ بسته‌ای برای گزارش وجود ندارد.</div>'}</section>
+      <section class="overview-block overview-recent"><h3>معاملات اخیر</h3>${recent.length ? `<div class="overview-list">${recent.map((trade) => { const pnl = tradePnl(trade); const isOpen = trade.status === 'open'; return `<div class="overview-trade"><div><strong>${escapeHtml(trade.token || 'بدون نام')}</strong><span>${escapeHtml(trade.network || '—')} · ${escapeHtml(getTradeDateKey(trade) || '—')}</span></div><strong class="${isOpen ? 'neutral' : pnl >= 0 ? 'positive' : 'negative'}">${isOpen ? 'باز' : `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`}</strong></div>`; }).join('')}</div>` : '<div class="overview-empty">هنوز معامله‌ای ثبت نشده است.</div>'}</section>
+    </div>`;
+}
+
+function setJournalView(view) {
+  activeJournalView = view === 'overview' ? 'overview' : 'journal';
+  const overview = activeJournalView === 'overview';
+  if (overviewView) overviewView.hidden = !overview;
+  if (calendarWrap) calendarWrap.hidden = overview;
+  if (overview && tradeForm) tradeForm.style.display = 'none';
+  journalViewButtons.forEach((button) => {
+    const active = button.dataset.journalView === activeJournalView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  if (overview) renderOverview();
+}
+
 function groupTradesByDay() {
   const map = {};
   state.trades.forEach((trade) => {
@@ -1155,11 +1195,15 @@ async function deleteTrade(id) {
 
 function renderAll() {
   renderSummary();
+  renderOverview();
   renderCalendar();
   renderSelectedDay();
 }
 
+journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
+
 document.getElementById('newTradeBtn').addEventListener('click', () => {
+  setJournalView('journal');
   resetForm();
   openTradeForm();
 });
