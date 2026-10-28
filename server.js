@@ -13,7 +13,9 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const JOURNAL_ACCESS_KEY = process.env.JOURNAL_ACCESS_KEY || '';
+const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || '';
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
+const journalChartCache = new Map();
 
 function requireJournalAccess(req, res, next) {
   if (!REMOTE_ENABLED) {
@@ -153,7 +155,7 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(PUBLIC_DIR));
 
 app.get('/api/config', (_req, res) => {
-  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true });
+  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true, chartEnabled: Boolean(BIRDEYE_API_KEY) });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -161,6 +163,50 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/trades', requireJournalAccess);
+
+app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
+  const address = String(req.query.address || '').trim();
+  const timeframe = String(req.query.timeframe || '5m');
+  const chain = String(req.query.chain || 'solana');
+  const start = Number(req.query.start);
+  const count = Math.min(200, Math.max(1, Number(req.query.count) || 13));
+  const intervalSeconds = timeframe === '15m' ? 900 : timeframe === '5m' ? 300 : 0;
+  if (!BIRDEYE_API_KEY) return res.status(503).json({ message: 'دریافت چارت وب تنظیم نشده؛ BIRDEYE_API_KEY را در Render اضافه کن.' });
+  if (!/^[A-Za-z0-9:_-]{1,128}$/.test(address) || !intervalSeconds || !Number.isInteger(start) || start <= 0 || !['solana', 'ethereum', 'base', 'bsc', 'arbitrum'].includes(chain)) {
+    return res.status(400).json({ message: 'آدرس توکن، تایم‌فریم یا بازهٔ کندل معتبر نیست.' });
+  }
+
+  const end = start + count * intervalSeconds;
+  const cacheKey = `${chain}:${address}:${timeframe}:${start}:${count}`;
+  const cached = journalChartCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 60_000) return res.json(cached.payload);
+
+  try {
+    const url = new URL('https://public-api.birdeye.so/defi/ohlcv');
+    url.searchParams.set('address', address);
+    url.searchParams.set('type', timeframe);
+    url.searchParams.set('currency', 'usd');
+    url.searchParams.set('time_from', String(start));
+    url.searchParams.set('time_to', String(end));
+    const response = await fetch(url, {
+      headers: { 'x-chain': chain, 'x-api-key': BIRDEYE_API_KEY },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) return res.status(502).json({ message: `Birdeye چارت را دریافت نکرد (${response.status}).` });
+    const result = await response.json();
+    const items = Array.isArray(result.data?.items) ? result.data.items : [];
+    const candles = items.map((item) => ({
+      time: Math.floor(Number(item.unixTime) > 1e12 ? Number(item.unixTime) / 1000 : Number(item.unixTime)),
+      open: Number(item.o), high: Number(item.h), low: Number(item.l), close: Number(item.c), volume: Number(item.v) || 0,
+    })).filter((item) => item.time >= start && item.time < end && [item.open, item.high, item.low, item.close].every(Number.isFinite))
+      .sort((left, right) => left.time - right.time).slice(0, count);
+    const payload = { candles };
+    journalChartCache.set(cacheKey, { timestamp: Date.now(), payload });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(502).json({ message: 'دریافت کندل از Birdeye ناموفق بود.' });
+  }
+});
 
 app.get('/api/trades', async (_req, res) => {
   if (REMOTE_ENABLED) {

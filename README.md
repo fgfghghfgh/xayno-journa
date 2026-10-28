@@ -28,10 +28,11 @@ Then open:
 
 1. Run the SQL in [supabase.sql](supabase.sql) in the Supabase SQL Editor. The table has row-level security enabled and grants no direct table access to browser users.
 2. In Render, open the service's **Environment** page and add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `JOURNAL_ACCESS_KEY`.
-3. Keep `SUPABASE_SERVICE_ROLE_KEY` only in Render. Never put it in the website, desktop app, GitHub, or a chat message.
-4. Use the same private `JOURNAL_ACCESS_KEY` in the website prompt and desktop app prompt. It protects your journal API; do not share it.
-5. Redeploy the Render service after saving environment variables.
-6. Publish the desktop app update built from `extracted-app/xay.html`; the desktop client syncs every 20 seconds and after local saves.
+3. Add `BIRDEYE_API_KEY` to Render as a server-only secret so the mobile journal can request bounded 5m/15m candles. Never put this key in browser code.
+4. Keep `SUPABASE_SERVICE_ROLE_KEY` only in Render. Never put it in the website, desktop app, GitHub, or a chat message.
+5. Use the same private `JOURNAL_ACCESS_KEY` in the website and desktop app. It protects your journal API; do not share it.
+6. Redeploy the Render service after saving environment variables.
+7. Publish the desktop app update built from `extracted-app/xay.html`; the desktop client syncs every 20 seconds and after local saves.
 
 Generate a private journal key locally with:
 

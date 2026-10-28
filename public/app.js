@@ -25,6 +25,185 @@ const syncLabel = document.getElementById('syncLabel');
 const syncState = document.getElementById('syncState');
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
+let journalChartInstance = null;
+let journalChartOverlayIds = [];
+
+if (window.klinecharts) {
+  try {
+    window.klinecharts.registerOverlay({
+      name: 'fibonacciLine',
+      totalStep: 3,
+      needDefaultPointFigure: true,
+      needDefaultXAxisFigure: true,
+      needDefaultYAxisFigure: true,
+      createPointFigures: (payload) => {
+        const points = payload.coordinates || [];
+        const source = payload.overlay.points || [];
+        if (points.length < 2 || source.length < 2) return [];
+        const high = Math.max(Number(source[0].value), Number(source[1].value));
+        const low = Math.min(Number(source[0].value), Number(source[1].value));
+        const x1 = Math.min(points[0].x, points[1].x);
+        const x2 = Math.max(points[0].x, points[1].x);
+        const yAxis = payload.yAxis;
+        const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+        const figures = [{ type: 'line', attrs: [{ coordinates: [points[0], points[1]] }] }];
+        levels.forEach((level) => {
+          const value = high - (high - low) * level;
+          const y = yAxis.convertToPixel(value);
+          figures.push({ type: 'line', attrs: [{ coordinates: [{ x: x1, y }, { x: x2, y }] }], styles: { color: '#00d4f5', style: 'dashed', size: 1 } });
+          figures.push({ type: 'text', isCheckEvent: false, attrs: [{ x: x2 + 3, y, text: String(level), align: 'left', baseline: 'middle' }], styles: { color: '#00d4f5', size: 9, backgroundColor: 'rgba(7,11,16,.85)' } });
+        });
+        return figures;
+      },
+    });
+  } catch (error) {}
+}
+
+function localDateTimeValue(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function closeJournalChart() {
+  if (journalChartInstance && window.klinecharts) window.klinecharts.dispose('journal-chart-canvas');
+  journalChartInstance = null;
+  journalChartOverlayIds = [];
+  document.getElementById('journalChartModal')?.remove();
+}
+
+function drawJournalOverlay(name) {
+  if (!journalChartInstance) return;
+  const id = journalChartInstance.createOverlay({
+    name,
+    styles: { line: { color: '#00d4f5', size: 1.5, style: 'dashed' } },
+  });
+  if (id) journalChartOverlayIds.push(id);
+}
+
+function mountJournalChart(snapshot) {
+  if (!window.klinecharts || !snapshot?.candles?.length) return;
+  if (journalChartInstance) window.klinecharts.dispose('journal-chart-canvas');
+  journalChartOverlayIds = [];
+  journalChartInstance = window.klinecharts.init('journal-chart-canvas');
+  journalChartInstance.setPriceVolumePrecision(8, 2);
+  journalChartInstance.setStyles({
+    grid: { horizontal: { color: 'rgba(255,255,255,.06)' }, vertical: { color: 'rgba(255,255,255,.04)' } },
+    candle: { type: 'candle_solid', bar: { upColor: '#00f5a0', downColor: '#ff4a6b', noChangeColor: '#8b93a7', upBorderColor: '#00f5a0', downBorderColor: '#ff4a6b', upWickColor: '#00f5a0', downWickColor: '#ff4a6b' } },
+  });
+  journalChartInstance.applyNewData(snapshot.candles.map((candle) => ({
+    timestamp: candle.time * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close, volume: candle.volume || 0,
+  })));
+  (snapshot.overlays || []).forEach((overlay) => {
+    const id = journalChartInstance.createOverlay({ name: overlay.name, points: overlay.points, styles: overlay.styles || {} });
+    if (id) journalChartOverlayIds.push(id);
+  });
+  journalChartInstance.scrollToRealTime();
+}
+
+function openTradeChart(trade) {
+  if (!trade.address) {
+    window.alert('برای دریافت چارت، ابتدا آدرس قرارداد توکن را در معامله ثبت کن.');
+    return;
+  }
+  closeJournalChart();
+  const chartData = trade.chart || { activeTimeframe: '5m', timeframes: {} };
+  const timeframe = chartData.activeTimeframe || '5m';
+  const intervalSeconds = timeframe === '15m' ? 900 : 300;
+  const existing = chartData.timeframes?.[timeframe];
+  const entryDate = trade.openedAt ? new Date(trade.openedAt) : new Date(Date.now() - intervalSeconds * 13 * 1000);
+  const start = existing?.start || Math.floor(entryDate.getTime() / (intervalSeconds * 1000)) * intervalSeconds;
+  const count = existing?.count || 13;
+  const modal = document.createElement('div');
+  modal.id = 'journalChartModal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.82);';
+  modal.innerHTML = `<section style="width:min(1100px,100%);height:min(760px,94vh);display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:#0d1418;color:#edf7f4;direction:rtl;font-family:Vazirmatn,Tahoma,sans-serif;">
+    <header style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><strong>چارت ${escapeHtml(trade.token)} · ${escapeHtml(trade.address)}</strong><button type="button" data-close-chart style="padding:7px 10px;border:1px solid rgba(255,255,255,.15);border-radius:6px;background:#182126;color:#edf7f4">بستن</button></header>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <label>تایم‌فریم <select data-chart-timeframe><option value="5m">۵ دقیقه</option><option value="15m">۱۵ دقیقه</option></select></label>
+      <label>شروع <input data-chart-start type="datetime-local" value="${localDateTimeValue(new Date(start * 1000))}"></label>
+      <label>تعداد کندل <input data-chart-count type="number" min="1" max="200" value="${count}" style="width:75px"></label>
+      <button type="button" data-load-chart style="padding:7px 10px;border:1px solid rgba(0,212,245,.3);border-radius:6px;background:rgba(0,212,245,.08);color:#00d4f5">دریافت کندل‌ها</button>
+      <button type="button" data-draw="segment">خط روند</button><button type="button" data-draw="fibonacciLine">فیبوناچی</button>
+      <button type="button" data-save-chart style="padding:7px 12px;border:1px solid rgba(0,245,160,.3);border-radius:6px;background:rgba(0,245,160,.09);color:#00f5a0">ذخیره چارت</button>
+    </div>
+    <div data-chart-status style="min-height:18px;color:#91a19c;font-size:11px"></div>
+    <div id="journal-chart-canvas" style="flex:1;min-height:300px;width:100%"></div>
+    <small style="color:#71817c">کندل‌ها و خطوط تحلیل در رکورد معامله ذخیره و با دستگاه دیگر همگام می‌شوند.</small>
+  </section>`;
+  document.body.append(modal);
+  const timeframeSelect = modal.querySelector('[data-chart-timeframe]');
+  const startInput = modal.querySelector('[data-chart-start]');
+  const countInput = modal.querySelector('[data-chart-count]');
+  const status = modal.querySelector('[data-chart-status]');
+  timeframeSelect.value = timeframe;
+  modal.querySelector('[data-close-chart]').addEventListener('click', closeJournalChart);
+  modal.querySelectorAll('[data-draw]').forEach((button) => button.addEventListener('click', () => drawJournalOverlay(button.dataset.draw)));
+  const loadSnapshot = (snapshot) => {
+    if (!snapshot?.candles?.length) return false;
+    mountJournalChart(snapshot);
+    status.textContent = `${snapshot.candles.length} کندل · ${timeframeSelect.value}`;
+    return true;
+  };
+  if (!loadSnapshot(existing)) status.textContent = 'بازهٔ شروع و تعداد کندل را انتخاب و دریافت کن.';
+  timeframeSelect.addEventListener('change', () => {
+    const saved = chartData.timeframes?.[timeframeSelect.value];
+    if (saved?.candles?.length) {
+      startInput.value = localDateTimeValue(new Date(saved.start * 1000));
+      countInput.value = saved.count;
+      loadSnapshot(saved);
+    } else {
+      if (journalChartInstance) window.klinecharts.dispose('journal-chart-canvas');
+      journalChartInstance = null;
+      status.textContent = 'برای این تایم‌فریم هنوز کندلی ذخیره نشده است.';
+    }
+  });
+  modal.querySelector('[data-load-chart]').addEventListener('click', async () => {
+    const selectedTimeframe = timeframeSelect.value;
+    const selectedCount = Math.min(200, Math.max(1, Number(countInput.value) || 13));
+    const intervalSeconds = selectedTimeframe === '15m' ? 900 : 300;
+    const selectedStart = Math.floor(new Date(startInput.value).getTime() / (intervalSeconds * 1000)) * intervalSeconds;
+    if (!Number.isFinite(selectedStart)) { status.textContent = 'زمان شروع معتبر نیست.'; return; }
+    const chain = ({ solana: 'solana', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum' })[String(trade.network || '').toLowerCase()] || 'solana';
+    status.textContent = 'در حال دریافت کندل‌ها از Birdeye...';
+    try {
+      const query = new URLSearchParams({ address: trade.address, timeframe: selectedTimeframe, chain, start: String(selectedStart), count: String(selectedCount) });
+      const response = await apiFetch(`/api/chart/candles?${query}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || 'دریافت کندل ناموفق بود.');
+      if (!payload.candles?.length) throw new Error('برای این بازه کندلی پیدا نشد. زمان شروع را تغییر بده.');
+      chartData.timeframes[selectedTimeframe] = { start: selectedStart, count: selectedCount, candles: payload.candles, overlays: [] };
+      loadSnapshot(chartData.timeframes[selectedTimeframe]);
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+  modal.querySelector('[data-save-chart]').addEventListener('click', async () => {
+    const selectedTimeframe = timeframeSelect.value;
+    const snapshot = chartData.timeframes[selectedTimeframe];
+    if (!snapshot?.candles?.length) { status.textContent = 'ابتدا کندل‌ها را دریافت کن.'; return; }
+    snapshot.overlays = journalChartOverlayIds.map((id) => journalChartInstance?.getOverlayById(id)).filter(Boolean).map((overlay) => ({ name: overlay.name, points: overlay.points, styles: overlay.styles }));
+    chartData.activeTimeframe = selectedTimeframe;
+    const updated = { ...trade, chart: chartData, updatedAt: new Date().toISOString() };
+    status.textContent = 'در حال ذخیره و همگام‌سازی...';
+    try {
+      const response = await apiFetch(`/api/trades/${encodeURIComponent(trade.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chart: chartData }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || 'ذخیرهٔ چارت ناموفق بود.');
+      state.trades = state.trades.map((item) => item.id === trade.id ? payload.trade : item);
+      saveLocalTrades(state.trades);
+      renderAll();
+      status.textContent = 'چارت ذخیره و همگام شد.';
+      window.setTimeout(closeJournalChart, 500);
+    } catch (error) {
+      updated.chart = chartData;
+      state.trades = state.trades.map((item) => item.id === trade.id ? updated : item);
+      saveLocalTrades(state.trades);
+      renderAll();
+      syncLocalTradesToServer(state.trades);
+      status.textContent = 'روی این دستگاه ذخیره شد؛ همگام‌سازی ابری ناموفق بود.';
+    }
+  });
+}
 
 function updateSyncStatus(online) {
   syncLabel.textContent = state.remoteEnabled ? 'همگام‌سازی ابری' : 'ذخیرهٔ محلی';
@@ -399,6 +578,7 @@ function renderSelectedDay() {
         ${trade.notes ? `<div class="trade-meta">${escapeHtml(trade.notes)}</div>` : ''}
         ${Array.isArray(trade.images) && trade.images.length ? `<div class="image-previews">${trade.images.map((image, index) => { const source = safeImageSource(image); return source ? `<img src="${escapeHtml(source)}" alt="تصویر معامله ${index + 1}" loading="lazy">` : ''; }).join('')}</div>` : ''}
         <div class="trade-actions">
+          <button class="mini-btn" data-chart="${escapeHtml(trade.id)}">${trade.chart?.timeframes?.[trade.chart?.activeTimeframe]?.candles?.length ? 'بازکردن چارت' : 'چارت کندلی'}</button>
           <button class="mini-btn" data-edit="${escapeHtml(trade.id)}">ویرایش</button>
           <button class="mini-btn" data-delete="${escapeHtml(trade.id)}">حذف</button>
         </div>
@@ -408,6 +588,13 @@ function renderSelectedDay() {
 
   document.querySelectorAll('[data-edit]').forEach((btn) => {
     btn.addEventListener('click', () => openFormForEdit(btn.dataset.edit));
+  });
+
+  document.querySelectorAll('[data-chart]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const trade = state.trades.find((item) => item.id === btn.dataset.chart);
+      if (trade) openTradeChart(trade);
+    });
   });
 
   document.querySelectorAll('[data-delete]').forEach((btn) => {
@@ -528,6 +715,7 @@ async function saveTrade(event) {
     resetForm();
     renderAll();
     updateSyncStatus(true);
+    if (payload.trade.address) window.setTimeout(() => openTradeChart(payload.trade), 0);
   } catch (error) {
     saveStatus.textContent = `${error.message}؛ فعلاً داده فقط در همین دستگاه نگه داشته شد و به دستگاه دیگر نرسیده است.`;
     saveStatus.style.color = 'var(--red)';
@@ -535,6 +723,7 @@ async function saveTrade(event) {
     state.trades = readLocalTrades();
     renderAll();
     updateSyncStatus(false);
+    if (nextTrade.address) window.setTimeout(() => openTradeChart(nextTrade), 0);
   } finally {
     submitButton.disabled = false;
   }
