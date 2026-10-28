@@ -12,6 +12,14 @@ const selectedDayLabel = document.getElementById('selectedDayLabel');
 const selectedDayTrades = document.getElementById('selectedDayTrades');
 const selectedDayPnl = document.getElementById('selectedDayPnl');
 const tradeForm = document.getElementById('tradeForm');
+const saveStatus = document.getElementById('saveStatus');
+
+function openTradeForm() {
+  saveStatus.hidden = true;
+  tradeForm.style.display = 'grid';
+  tradeForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('token').focus({ preventScroll: true });
+}
 
 function readLocalTrades() {
   try {
@@ -232,13 +240,14 @@ function openFormForEdit(id) {
   const trade = state.trades.find((item) => item.id === id);
   if (!trade) return;
   fillForm(trade);
-  tradeForm.style.display = 'grid';
+  openTradeForm();
 }
 
 function resetForm() {
   tradeForm.reset();
   document.getElementById('tradeId').value = '';
   document.getElementById('journalDate').value = state.selectedDate;
+  saveStatus.hidden = true;
 }
 
 function getFormValues() {
@@ -260,40 +269,62 @@ function getFormValues() {
 async function saveTrade(event) {
   event.preventDefault();
   const values = getFormValues();
-  if (!values.token) return;
+  if (!values.token) {
+    saveStatus.textContent = 'نام توکن را وارد کن.';
+    saveStatus.hidden = false;
+    document.getElementById('token').focus();
+    return;
+  }
 
+  const submitButton = tradeForm.querySelector('button[type="submit"]');
   const nextTrade = {
     id: values.id || `trade_${Date.now()}`,
     ...values,
+    createdAt: state.trades.find((trade) => trade.id === values.id)?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-
-  const existingIndex = state.trades.findIndex((trade) => trade.id === nextTrade.id);
-  const nextTrades = existingIndex >= 0
-    ? state.trades.map((trade) => trade.id === nextTrade.id ? nextTrade : trade)
-    : [nextTrade, ...state.trades];
-
-  state.trades = nextTrades;
-  saveLocalTrades(state.trades);
+  submitButton.disabled = true;
+  saveStatus.textContent = 'در حال ذخیره...';
+  saveStatus.style.color = 'var(--text-muted)';
+  saveStatus.hidden = false;
   try {
-    await fetch('/api/trades', {
+    const response = await fetch('/api/trades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nextTrade),
     });
-  } catch (error) {
-    // Local fallback remains active when server is unavailable.
-  }
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.message || 'ذخیره در سرور انجام نشد.');
 
-  resetForm();
-  tradeForm.style.display = 'none';
-  renderAll();
+    const existingIndex = state.trades.findIndex((trade) => trade.id === nextTrade.id);
+    state.trades = existingIndex >= 0
+      ? state.trades.map((trade) => trade.id === nextTrade.id ? payload.trade : trade)
+      : [payload.trade, ...state.trades];
+    saveLocalTrades(state.trades);
+    tradeForm.style.display = 'none';
+    resetForm();
+    renderAll();
+  } catch (error) {
+    saveStatus.textContent = `${error.message} داده در همین دستگاه نگه داشته شد؛ اتصال اینترنت را بررسی کن و دوباره ذخیره بزن.`;
+    saveStatus.style.color = 'var(--red)';
+    saveLocalTrades([nextTrade, ...state.trades.filter((trade) => trade.id !== nextTrade.id)]);
+    state.trades = readLocalTrades();
+    renderAll();
+  } finally {
+    submitButton.disabled = false;
+  }
 }
 
-function deleteTrade(id) {
-  state.trades = state.trades.filter((trade) => trade.id !== id);
-  saveLocalTrades(state.trades);
-  renderAll();
+async function deleteTrade(id) {
+  try {
+    const response = await fetch(`/api/trades/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('حذف از سرور انجام نشد.');
+    state.trades = state.trades.filter((trade) => trade.id !== id);
+    saveLocalTrades(state.trades);
+    renderAll();
+  } catch (error) {
+    window.alert(`${error.message} معامله در سایت باقی ماند.`);
+  }
 }
 
 function renderAll() {
@@ -304,7 +335,7 @@ function renderAll() {
 
 document.getElementById('newTradeBtn').addEventListener('click', () => {
   resetForm();
-  tradeForm.style.display = 'grid';
+  openTradeForm();
 });
 
 document.getElementById('cancelFormBtn').addEventListener('click', () => {

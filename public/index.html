@@ -457,6 +457,7 @@
       .xh-form-panel {
         margin-top: 22px;
         padding: 20px 18px 18px;
+        scroll-margin-top: 12px;
       }
 
       .submit-form {
@@ -515,6 +516,22 @@
         flex-direction: row;
         justify-content: flex-end;
         gap: 8px;
+        position: sticky;
+        bottom: 8px;
+        z-index: 2;
+        padding: 10px;
+        border-radius: 12px;
+        background: rgba(12, 18, 23, 0.96);
+      }
+
+      .save-status {
+        grid-column: 1 / -1;
+        color: var(--red);
+        font-size: 13px;
+      }
+
+      .save-status[hidden] {
+        display: none;
       }
 
       @media (max-width: 900px) {
@@ -646,6 +663,7 @@
               </div>
 
               <div class="field actions">
+                <div id="saveStatus" class="save-status" role="status" aria-live="polite" hidden></div>
                 <button type="button" id="cancelFormBtn" class="mini-btn">انصراف</button>
                 <button type="submit" class="action-btn">ذخیره</button>
               </div>
