@@ -1,9 +1,13 @@
 const STORAGE_KEY = 'xayno-local-journal';
 const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
+function localDateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 const state = {
   trades: [],
   currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-  selectedDate: new Date().toISOString().slice(0, 10),
+  selectedDate: localDateKey(new Date()),
   formImages: [],
   remoteEnabled: false,
 };
@@ -281,8 +285,27 @@ function groupTradesByDay() {
   return map;
 }
 
+function dayPnlPercent(trades) {
+  const closedTrades = trades.filter((trade) => trade.status === 'closed');
+  const invested = closedTrades.reduce((sum, trade) => {
+    const amount = Number(trade.investAmount);
+    return Number.isFinite(amount) && amount > 0 ? sum + amount : sum;
+  }, 0);
+  if (invested > 0) return closedTrades.reduce((sum, trade) => sum + tradePnl(trade), 0) / invested * 100;
+  return closedTrades.reduce((sum, trade) => {
+    const percent = trade.pnlPercent;
+    return percent !== '' && percent != null && Number.isFinite(Number(percent)) ? sum + Number(percent) : sum;
+  }, 0);
+}
+
+function formatDayPercent(value) {
+  const rounded = Math.round(value * 10) / 10;
+  const display = Number.isInteger(rounded) ? String(Math.abs(rounded)) : Math.abs(rounded).toFixed(1);
+  return `${rounded >= 0 ? '+' : '-'}${display}%`;
+}
+
 function renderCalendar() {
-  monthLabel.textContent = state.currentMonth.toLocaleDateString('fa-IR', { month: 'long', year: 'numeric' });
+  monthLabel.textContent = state.currentMonth.toLocaleDateString('fa-IR-u-ca-gregory', { month: 'long', year: 'numeric' });
 
   const year = state.currentMonth.getFullYear();
   const month = state.currentMonth.getMonth();
@@ -301,23 +324,27 @@ function renderCalendar() {
     .map((label) => `<div class="week-name">${label}</div>`)
     .join('') + days.map((dayNumber) => {
       if (!dayNumber) return '<div class="day-cell" style="visibility:hidden"></div>';
-      const dateKey = new Date(year, month, dayNumber).toISOString().slice(0, 10);
+      const date = new Date(year, month, dayNumber);
+      const dateKey = localDateKey(date);
       const dayTrades = groups[dateKey] || [];
       const dayPnl = dayTrades.reduce((sum, trade) => sum + tradePnl(trade), 0);
+      const dayPercent = dayPnlPercent(dayTrades);
       const wins = dayTrades.filter((trade) => tradePnl(trade) > 0).length;
       const losses = dayTrades.filter((trade) => tradePnl(trade) < 0).length;
       const openCount = dayTrades.filter((trade) => trade.status === 'open').length;
       const selected = dateKey === state.selectedDate ? 'selected' : '';
+      const today = dateKey === localDateKey(new Date()) ? 'today' : '';
       const tone = dayPnl > 0 ? 'green' : dayPnl < 0 ? 'red' : '';
 
       return `
-        <button class="day-cell ${selected} ${tone}" data-date="${dateKey}">
+        <button class="day-cell ${selected} ${today} ${tone}" data-date="${dateKey}">
           <div class="day-num">${dayNumber}</div>
           <div class="day-badges">
             ${wins ? `<span class="badge-win">+${wins}</span>` : ''}
             ${losses ? `<span class="badge-loss">-${losses}</span>` : ''}
             ${openCount ? `<span class="badge-open">${openCount}●</span>` : ''}
           </div>
+          ${dayTrades.some((trade) => trade.status === 'closed') ? `<div class="day-percent" style="color:${dayPnl > 0 ? 'var(--green)' : dayPnl < 0 ? 'var(--red)' : 'var(--text-dim)'}">${formatDayPercent(dayPercent)}</div>` : '<div class="day-percent day-percent-empty"></div>'}
         </button>
       `;
     }).join('');
@@ -337,7 +364,7 @@ function renderSelectedDay() {
   const trades = groups[key] || [];
   const totalPnl = trades.reduce((sum, trade) => sum + tradePnl(trade), 0);
 
-  selectedDayLabel.textContent = new Date(`${key}T00:00:00`).toLocaleDateString('fa-IR', { year: 'numeric', month: 'long', day: 'numeric' });
+  selectedDayLabel.textContent = new Date(`${key}T00:00:00`).toLocaleDateString('fa-IR-u-ca-gregory', { year: 'numeric', month: 'long', day: 'numeric' });
   selectedDayPnl.textContent = trades.length ? `${totalPnl >= 0 ? '+' : '-'}$${Math.abs(totalPnl).toFixed(2)}` : '';
   selectedDayPnl.style.color = totalPnl >= 0 ? 'var(--green)' : totalPnl < 0 ? 'var(--red)' : 'var(--muted)';
 
@@ -390,7 +417,7 @@ function renderSelectedDay() {
 
 function fillForm(trade) {
   document.getElementById('tradeId').value = trade.id || '';
-  document.getElementById('journalDate').value = trade.journalDate || getTradeDateKey(trade) || new Date().toISOString().slice(0, 10);
+  document.getElementById('journalDate').value = trade.journalDate || getTradeDateKey(trade) || localDateKey(new Date());
   document.getElementById('token').value = trade.token || '';
   document.getElementById('network').value = trade.network || 'Solana';
   document.getElementById('status').value = trade.status || 'closed';
@@ -571,7 +598,7 @@ async function hydrateApp() {
     state.trades = pendingLocalTrades;
   }
 
-  state.selectedDate = new Date().toISOString().slice(0, 10);
+  state.selectedDate = localDateKey(new Date());
   resetForm();
   renderAll();
   syncLocalTradesToServer(pendingLocalTrades);
