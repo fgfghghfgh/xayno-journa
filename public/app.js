@@ -456,6 +456,9 @@ function mountJournalChart(snapshot, trade) {
   journalSelectedOverlayId = null;
   journalChartInstance = window.klinecharts.init('journal-chart-canvas');
   journalChartInstance.setPriceVolumePrecision(0, 2);
+  journalChartInstance.setZoomEnabled(true);
+  journalChartInstance.setScrollEnabled(true);
+  journalChartInstance.setPaneOptions({ id: 'candle_pane', axisOptions: { name: 'default', scrollZoomEnabled: true } });
   journalChartInstance.setStyles({
     grid: { horizontal: { color: 'rgba(255,255,255,.06)' }, vertical: { color: 'rgba(255,255,255,.04)' } },
     candle: { type: 'candle_solid', bar: { upColor: '#00f5a0', downColor: '#ff4a6b', noChangeColor: '#8b93a7', upBorderColor: '#00f5a0', downBorderColor: '#ff4a6b', upWickColor: '#00f5a0', downWickColor: '#ff4a6b' } },
