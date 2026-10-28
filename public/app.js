@@ -462,6 +462,31 @@ function mountJournalChart(snapshot, trade) {
   applyJournalCrosshair();
 }
 
+function recalculateTradePnl() {
+  const entry = Number(document.getElementById('entryMarketCap').value);
+  const exit = Number(document.getElementById('exitMarketCap').value);
+  const invest = Number(document.getElementById('investAmount').value);
+  const percentField = document.getElementById('pnlPercent');
+  const dollarField = document.getElementById('pnlDollar');
+  const outcomeField = document.getElementById('pnlOutcome');
+  if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(exit) || exit <= 0) {
+    percentField.value = '';
+    dollarField.value = '';
+    outcomeField.value = 'profit';
+    return;
+  }
+  const percent = (exit - entry) / entry * 100;
+  percentField.value = (Math.abs(percent) < 0.005 ? 0 : percent).toFixed(2);
+  dollarField.value = Number.isFinite(invest) && invest > 0
+    ? (Math.abs(invest * percent / 100) < 0.005 ? 0 : invest * percent / 100).toFixed(2)
+    : '';
+  outcomeField.value = percent < 0 ? 'loss' : 'profit';
+}
+
+['entryMarketCap', 'exitMarketCap', 'investAmount'].forEach((id) => {
+  document.getElementById(id).addEventListener('input', recalculateTradePnl);
+});
+
 function openTradeChart(trade) {
   if (!trade.address) {
     window.alert('برای دریافت چارت، ابتدا آدرس قرارداد توکن را در معامله ثبت کن.');
