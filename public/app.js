@@ -398,14 +398,33 @@ function applyJournalCrosshair() {
   journalChartInstance.setStyles({ crosshair: { show: true, horizontal: { show: true, line: { show: true, color: journalCrosshair.color, size: journalCrosshair.width, style: journalCrosshair.style } }, vertical: { show: true, line: { show: true, color: journalCrosshair.color, size: journalCrosshair.width, style: journalCrosshair.style } } } });
 }
 
-function mountJournalChart(snapshot) {
+function journalPnlSummary(trade) {
+  const signedValue = (value) => {
+    if (value === '' || value == null || !Number.isFinite(Number(value))) return null;
+    const number = Number(value);
+    return Math.abs(number) * (trade.pnlOutcome === 'loss' || number < 0 ? -1 : 1);
+  };
+  const entry = Number(trade.entryMarketCap);
+  const exit = Number(trade.exitMarketCap);
+  const direction = String(trade.direction || 'buy').toLowerCase();
+  const derivedPercent = entry > 0 && exit > 0
+    ? (direction === 'sell' ? (entry - exit) / entry : (exit - entry) / entry) * 100
+    : null;
+  const percent = signedValue(trade.pnlPercent) ?? derivedPercent;
+  const dollar = signedValue(trade.pnlDollar)
+    ?? (percent != null && Number(trade.investAmount) > 0 ? Number(trade.investAmount) * percent / 100 : null);
+  const format = (value, suffix) => value == null ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(2)}${suffix}`;
+  return { percent: format(percent, '%'), dollar: dollar == null ? '—' : `${dollar > 0 ? '+' : dollar < 0 ? '-' : ''}$${Math.abs(dollar).toFixed(2)}`, entry, exit, positive: (dollar ?? percent ?? 0) >= 0 };
+}
+
+function mountJournalChart(snapshot, trade) {
   if (!window.klinecharts || !snapshot?.candles?.length) return;
   if (journalChartInstance) window.klinecharts.dispose('journal-chart-canvas');
   journalChartOverlayIds = [];
   journalChartOverlayState = new Map();
   journalSelectedOverlayId = null;
   journalChartInstance = window.klinecharts.init('journal-chart-canvas');
-  journalChartInstance.setPriceVolumePrecision(8, 2);
+  journalChartInstance.setPriceVolumePrecision(0, 2);
   journalChartInstance.setStyles({
     grid: { horizontal: { color: 'rgba(255,255,255,.06)' }, vertical: { color: 'rgba(255,255,255,.04)' } },
     candle: { type: 'candle_solid', bar: { upColor: '#00f5a0', downColor: '#ff4a6b', noChangeColor: '#8b93a7', upBorderColor: '#00f5a0', downBorderColor: '#ff4a6b', upWickColor: '#00f5a0', downWickColor: '#ff4a6b' } },
@@ -413,6 +432,13 @@ function mountJournalChart(snapshot) {
   journalChartInstance.applyNewData(snapshot.candles.map((candle) => ({
     timestamp: candle.time * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close, volume: candle.volume || 0,
   })));
+  const firstTimestamp = snapshot.candles[0].time * 1000;
+  [
+    { value: Number(trade?.entryMarketCap), color: '#00f5a0' },
+    { value: Number(trade?.exitMarketCap), color: '#ff4a6b' },
+  ].filter((level) => Number.isFinite(level.value) && level.value > 0).forEach((level) => {
+    journalChartInstance.createOverlay({ name: 'horizontalStraightLine', points: [{ timestamp: firstTimestamp, value: level.value }], styles: { line: { color: level.color, size: 2, style: 'dashed' } }, lock: true });
+  });
   journalCrosshair = { ...journalCrosshair, ...(snapshot.crosshair || {}) };
   (snapshot.overlays || []).forEach((overlay) => {
     const callbacks = {
@@ -447,7 +473,7 @@ function openTradeChart(trade) {
   const intervalSeconds = timeframe === '15m' ? 900 : 300;
   const existing = chartData.timeframes?.[timeframe];
   let fullCandles = [];
-  let selectionConfirmed = Boolean(existing?.candles?.length);
+  let selectionConfirmed = Boolean(existing?.candles?.length && existing.valueType === 'marketCap');
   const modal = document.createElement('div');
   modal.id = 'journalChartModal';
   modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.82);';
@@ -480,6 +506,11 @@ function openTradeChart(trade) {
     <small style="color:#71817c">کندل‌ها و خطوط تحلیل در رکورد معامله ذخیره و با دستگاه دیگر همگام می‌شوند.</small>
   </section>`;
   document.body.append(modal);
+  const pnlSummary = journalPnlSummary(trade);
+  const pnlBanner = document.createElement('div');
+  pnlBanner.style.cssText = `display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:9px 12px;border:1px solid rgba(255,255,255,.09);border-radius:6px;background:rgba(255,255,255,.025);font-size:11px;color:#91a19c`;
+  pnlBanner.innerHTML = `<strong style="color:${pnlSummary.positive ? '#00f5a0' : '#ff4a6b'}">PnL ${escapeHtml(pnlSummary.percent)} · ${escapeHtml(pnlSummary.dollar)}</strong><span style="color:#00f5a0">ورود ${Number.isFinite(pnlSummary.entry) && pnlSummary.entry > 0 ? '$' + pnlSummary.entry.toLocaleString('en-US') : '—'}</span><span style="color:#ff4a6b">خروج ${Number.isFinite(pnlSummary.exit) && pnlSummary.exit > 0 ? '$' + pnlSummary.exit.toLocaleString('en-US') : '—'}</span><span>محور: مارکت‌کپ</span>`;
+  modal.querySelector('header').insertAdjacentElement('afterend', pnlBanner);
   enableJournalSettingsDrag(modal);
   const timeframeSelect = modal.querySelector('[data-chart-timeframe]');
   const fromInput = modal.querySelector('[data-chart-from]');
@@ -507,8 +538,8 @@ function openTradeChart(trade) {
   };
   modal.querySelectorAll('[data-crosshair-color], [data-crosshair-width], [data-crosshair-style]').forEach((control) => control.addEventListener('change', updateCrosshair));
   const loadSnapshot = (snapshot) => {
-    if (!snapshot?.candles?.length) return false;
-    mountJournalChart(snapshot);
+    if (!snapshot?.candles?.length || snapshot.valueType !== 'marketCap') return false;
+    mountJournalChart(snapshot, trade);
     status.textContent = `${snapshot.candles.length} کندل · ${timeframeSelect.value}`;
     return true;
   };
@@ -519,7 +550,7 @@ function openTradeChart(trade) {
     modal.querySelector('[data-confirm-range]').disabled = true;
     modal.querySelectorAll('[data-draw], [data-save-chart]').forEach((button) => { button.disabled = true; });
     const saved = chartData.timeframes?.[timeframeSelect.value];
-    if (saved?.candles?.length) {
+    if (saved?.candles?.length && saved.valueType === 'marketCap') {
       selectionConfirmed = true;
       fromInput.value = '1';
       toInput.value = String(saved.candles.length);
@@ -528,7 +559,7 @@ function openTradeChart(trade) {
     } else {
       if (journalChartInstance) window.klinecharts.dispose('journal-chart-canvas');
       journalChartInstance = null;
-      status.textContent = 'برای این تایم‌فریم هنوز کندلی ذخیره نشده است.';
+      status.textContent = saved?.candles?.length ? 'چارت ذخیره‌شده مربوط به قیمت است؛ برای نمایش مارکت‌کپ دوباره چارت کامل را دریافت کن.' : 'برای این تایم‌فریم هنوز کندلی ذخیره نشده است.';
     }
   });
   modal.querySelector('[data-load-chart]').addEventListener('click', async () => {
@@ -545,6 +576,7 @@ function openTradeChart(trade) {
       const response = await apiFetch(`/api/chart/candles?${query}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || 'دریافت کندل ناموفق بود.');
+      if (payload.valueType !== 'marketCap') throw new Error('سرویس چارت هنوز مارکت‌کپ برنمی‌گرداند؛ API ژورنال وب را به‌روزرسانی کن.');
       if (!payload.candles?.length) throw new Error('Birdeye برای این توکن در تایم‌فریم انتخابی کندلی برنگرداند؛ آدرس قرارداد یا تایم‌فریم را بررسی کن.');
       fullCandles = payload.candles;
       selectionConfirmed = false;
@@ -552,7 +584,7 @@ function openTradeChart(trade) {
       fromInput.value = '1';
       toInput.value = String(Math.min(13, fullCandles.length));
       modal.querySelector('[data-confirm-range]').disabled = false;
-      mountJournalChart({ candles: fullCandles, overlays: [] });
+      mountJournalChart({ candles: fullCandles, overlays: [] }, trade);
       const limitedMessage = payload.truncated ? ' (فقط ۱۵۰۰ کندل آخر)' : '';
       status.textContent = `${fullCandles.length} کندل اخیر در تاریخچه${limitedMessage}؛ شمارهٔ بازه را وارد و تأیید کن.`;
     } catch (error) {
@@ -569,7 +601,7 @@ function openTradeChart(trade) {
     }
     const candles = fullCandles.slice(from - 1, to);
     selectionConfirmed = true;
-    const snapshot = { start: candles[0].time, count: candles.length, fromIndex: from, toIndex: to, candles, overlays: [] };
+    const snapshot = { start: candles[0].time, count: candles.length, fromIndex: from, toIndex: to, valueType: 'marketCap', candles, overlays: [] };
     chartData.timeframes[timeframeSelect.value] = snapshot;
     chartData.activeTimeframe = timeframeSelect.value;
     const updatedTrade = { ...trade, chart: chartData, updatedAt: new Date().toISOString() };

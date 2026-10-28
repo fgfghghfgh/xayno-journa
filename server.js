@@ -16,6 +16,7 @@ const JOURNAL_ACCESS_KEY = process.env.JOURNAL_ACCESS_KEY || '';
 const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || '';
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
 const journalChartCache = new Map();
+const journalSupplyCache = new Map();
 
 function requireJournalAccess(req, res, next) {
   if (!REMOTE_ENABLED) {
@@ -164,6 +165,29 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/trades', requireJournalAccess);
 
+async function fetchCirculatingSupply(address, chain) {
+  const cacheKey = `${chain}:${address}`;
+  const cached = journalSupplyCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 300_000) return cached.supply;
+
+  const url = new URL('https://public-api.birdeye.so/defi/token_overview');
+  url.searchParams.set('address', address);
+  const response = await fetch(url, {
+    headers: { 'x-chain': chain, 'x-api-key': BIRDEYE_API_KEY },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Birdeye token overview failed (${response.status}).`);
+  const result = await response.json();
+  const overview = result.data || {};
+  const currentPrice = Number(overview.price);
+  const marketCap = Number(overview.market_cap ?? overview.marketCap);
+  const supply = Number(overview.circulating_supply ?? overview.circulatingSupply)
+    || (currentPrice > 0 && marketCap > 0 ? marketCap / currentPrice : 0);
+  if (!Number.isFinite(supply) || supply <= 0) throw new Error('Birdeye did not return circulating supply.');
+  journalSupplyCache.set(cacheKey, { timestamp: Date.now(), supply });
+  return supply;
+}
+
 app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
   const address = String(req.query.address || '').trim();
   const timeframe = String(req.query.timeframe || '5m');
@@ -182,10 +206,12 @@ app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
   const end = requestedEnd;
   const start = truncated ? end - maxCandles * intervalSeconds : requestedStart;
   const cacheKey = `${chain}:${address}:${timeframe}:${start}:${end}`;
-  const cached = journalChartCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < 60_000) return res.json(cached.payload);
 
   try {
+    const circulatingSupply = await fetchCirculatingSupply(address, chain);
+    const marketCapCacheKey = `${cacheKey}:marketCap:${circulatingSupply}`;
+    const cached = journalChartCache.get(marketCapCacheKey);
+    if (cached && Date.now() - cached.timestamp < 60_000) return res.json(cached.payload);
     const url = new URL('https://public-api.birdeye.so/defi/ohlcv');
     url.searchParams.set('address', address);
     url.searchParams.set('type', timeframe);
@@ -205,16 +231,17 @@ app.get('/api/chart/candles', requireJournalAccess, async (req, res) => {
     }
     const result = await response.json();
     const items = Array.isArray(result.data?.items) ? result.data.items : [];
+    const toMarketCap = (value) => Number(value) * circulatingSupply;
     const candles = items.map((item) => ({
       time: Math.floor(Number(item.unixTime) > 1e12 ? Number(item.unixTime) / 1000 : Number(item.unixTime)),
-      open: Number(item.o), high: Number(item.h), low: Number(item.l), close: Number(item.c), volume: Number(item.v) || 0,
+      open: toMarketCap(item.o), high: toMarketCap(item.h), low: toMarketCap(item.l), close: toMarketCap(item.c), volume: Number(item.v) || 0,
     })).filter((item) => item.time >= start && item.time < end && [item.open, item.high, item.low, item.close].every(Number.isFinite))
       .sort((left, right) => left.time - right.time).slice(-maxCandles);
-    const payload = { candles, truncated, requestedFrom: requestedStart, loadedFrom: start, loadedTo: end };
-    journalChartCache.set(cacheKey, { timestamp: Date.now(), payload });
+    const payload = { candles, valueType: 'marketCap', circulatingSupply, truncated, requestedFrom: requestedStart, loadedFrom: start, loadedTo: end };
+    journalChartCache.set(marketCapCacheKey, { timestamp: Date.now(), payload });
     return res.json(payload);
   } catch (error) {
-    return res.status(502).json({ message: 'دریافت کندل از Birdeye ناموفق بود.' });
+    return res.status(502).json({ message: error.message === 'Birdeye did not return circulating supply.' ? 'Birdeye عرضهٔ درگردش این توکن را برنگرداند؛ دریافت نمودار مارکت‌کپ ممکن نیست.' : 'دریافت دادهٔ مارکت‌کپ از Birdeye ناموفق بود.' });
   }
 });
 
