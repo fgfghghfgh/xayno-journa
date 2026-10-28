@@ -166,20 +166,18 @@ function openTradeChart(trade) {
   modal.querySelector('[data-load-chart]').addEventListener('click', async () => {
     const selectedTimeframe = timeframeSelect.value;
     const intervalSeconds = selectedTimeframe === '15m' ? 900 : 300;
-    const entryDate = trade.openedAt ? new Date(trade.openedAt) : new Date(Date.now() - intervalSeconds * 13 * 1000);
-    const exitDate = trade.closedAt ? new Date(trade.closedAt) : new Date();
-    const from = Math.floor(entryDate.getTime() / (intervalSeconds * 1000)) * intervalSeconds;
-    const to = Math.floor(exitDate.getTime() / (intervalSeconds * 1000)) * intervalSeconds + intervalSeconds;
-    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) { status.textContent = 'زمان ورود/خروج معامله معتبر نیست.'; return; }
+    const to = Math.floor(Date.now() / (intervalSeconds * 1000)) * intervalSeconds + intervalSeconds;
+    const from = to - 1500 * intervalSeconds;
+    const legacyCount = 200;
+    const legacyStart = to - legacyCount * intervalSeconds;
     const chain = ({ solana: 'solana', ethereum: 'ethereum', base: 'base', bsc: 'bsc', arbitrum: 'arbitrum' })[String(trade.network || '').toLowerCase()] || 'solana';
-    status.textContent = 'در حال دریافت تاریخچهٔ چارت معامله...';
+    status.textContent = 'در حال دریافت کندل‌های اخیر چارت...';
     try {
-      const historyCount = Math.max(1, Math.min(200, Math.ceil((to - from) / intervalSeconds)));
-      const query = new URLSearchParams({ address: trade.address, timeframe: selectedTimeframe, chain, from: String(from), to: String(to), start: String(from), count: String(historyCount) });
+      const query = new URLSearchParams({ address: trade.address, timeframe: selectedTimeframe, chain, from: String(from), to: String(to), start: String(legacyStart), count: String(legacyCount) });
       const response = await apiFetch(`/api/chart/candles?${query}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || 'دریافت کندل ناموفق بود.');
-      if (!payload.candles?.length) throw new Error('برای فاصلهٔ زمانی معامله کندلی پیدا نشد؛ زمان ورود و خروج را بررسی کن.');
+      if (!payload.candles?.length) throw new Error('Birdeye برای این توکن در تایم‌فریم انتخابی کندلی برنگرداند؛ آدرس قرارداد یا تایم‌فریم را بررسی کن.');
       fullCandles = payload.candles;
       selectionConfirmed = false;
       modal.querySelectorAll('[data-draw], [data-save-chart]').forEach((button) => { button.disabled = true; });
@@ -188,7 +186,7 @@ function openTradeChart(trade) {
       modal.querySelector('[data-confirm-range]').disabled = false;
       mountJournalChart({ candles: fullCandles, overlays: [] });
       const limitedMessage = payload.truncated ? ' (فقط ۱۵۰۰ کندل آخر)' : '';
-      status.textContent = `${fullCandles.length} کندل در تاریخچه${limitedMessage}؛ شمارهٔ بازه را وارد و تأیید کن.`;
+      status.textContent = `${fullCandles.length} کندل اخیر در تاریخچه${limitedMessage}؛ شمارهٔ بازه را وارد و تأیید کن.`;
     } catch (error) {
       status.textContent = error.message;
     }
