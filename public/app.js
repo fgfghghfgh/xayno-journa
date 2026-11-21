@@ -1042,6 +1042,85 @@ function tradePnl(trade) {
   return 0;
 }
 
+function getProcessScore(trade) {
+  const entryDate = trade.entryTimeProvided && trade.openedAt ? new Date(trade.openedAt) : null;
+  const hasEntryTime = entryDate && Number.isFinite(entryDate.getTime());
+  const criteria = [
+    { label: 'ورود در بازهٔ ۸ تا ۱۱ صبح', available: Boolean(hasEntryTime), passed: Boolean(hasEntryTime && entryDate.getHours() >= 8 && entryDate.getHours() < 11) },
+    { label: 'حالت ذهنی ثبت شده', available: Boolean(String(trade.emotion || '').trim()), passed: Boolean(String(trade.emotion || '').trim()) },
+    { label: 'ستاپ ثبت شده', available: Boolean(String(trade.setup || '').trim()), passed: Boolean(String(trade.setup || '').trim()) },
+    { label: 'حد ضرر ثبت شده', available: Boolean(String(trade.stopLoss || '').trim()), passed: Boolean(String(trade.stopLoss || '').trim()) },
+    { label: 'دلیل ورود ثبت شده', available: Boolean(String(trade.entryReason || '').trim()), passed: Boolean(String(trade.entryReason || '').trim()) },
+  ];
+  const score = criteria.reduce((sum, item) => sum + (item.passed ? 20 : 0), 0);
+  const grade = score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
+  return {
+    score,
+    grade,
+    criteria,
+    complete: criteria.every((item) => item.available),
+    availableCount: criteria.filter((item) => item.available).length,
+    passedCount: criteria.filter((item) => item.passed).length,
+  };
+}
+
+function getOutcomeLabel(trade) {
+  if (trade.status === 'open') return 'باز';
+  const pnl = tradePnl(trade);
+  return pnl > 0 ? 'سود' : pnl < 0 ? 'ضرر' : 'سر به سر';
+}
+
+function getProcessOutcomeTag(trade, process) {
+  if (!process.complete || trade.status !== 'closed') return '';
+  const pnl = tradePnl(trade);
+  if (pnl > 0 && process.score <= 80) return 'سود بد';
+  if (pnl < 0 && process.score === 100) return 'ضرر خوب';
+  return '';
+}
+
+function processBadgeMarkup(trade) {
+  const process = getProcessScore(trade);
+  const tag = getProcessOutcomeTag(trade, process);
+  const gradeText = process.complete
+    ? `فرآیند ${process.grade} · ${process.score}/100`
+    : `فرآیند ناقص · ${process.availableCount}/5`;
+  const outcome = getOutcomeLabel(trade);
+  const tagMarkup = tag ? ` · ${tag}` : '';
+  const tone = process.complete ? (process.score >= 80 ? 'good' : process.score <= 40 ? 'bad' : '') : 'incomplete';
+  return `<span class="process-badge ${tone}">${gradeText} · نتیجه: ${outcome}${tagMarkup}</span>`;
+}
+
+function processTrendMarkup(trades) {
+  const scored = trades
+    .map((trade) => ({ trade, process: getProcessScore(trade) }))
+    .filter((item) => item.process.complete)
+    .sort((left, right) => getTradeDateKey(left.trade).localeCompare(getTradeDateKey(right.trade)))
+    .slice(-20);
+  if (!scored.length) return '<div class="process-chart-empty">برای رسم روند، اطلاعات فرآیند را در معاملات ثبت یا ویرایش کن.</div>';
+
+  const width = 600;
+  const height = 180;
+  const padding = { top: 16, right: 18, bottom: 30, left: 34 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const points = scored.map(({ process }, index) => {
+    const x = scored.length === 1 ? padding.left + chartWidth / 2 : padding.left + index * chartWidth / (scored.length - 1);
+    const y = padding.top + chartHeight * (1 - process.score / 100);
+    return { x, y, score: process.score };
+  });
+  const polyline = points.map((point) => `${point.x},${point.y}`).join(' ');
+  const average = scored.reduce((sum, item) => sum + item.process.score, 0) / scored.length;
+  return `<svg class="process-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="روند نمرهٔ فرآیند در ${scored.length} معامله؛ میانگین ${average.toFixed(0)} از ۱۰۰">
+    ${[0, 50, 100].map((score) => {
+      const y = padding.top + chartHeight * (1 - score / 100);
+      return `<line class="process-chart-grid" x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}"/><text class="process-chart-label" x="2" y="${y + 3}">${score}</text>`;
+    }).join('')}
+    <polyline class="process-chart-line" points="${polyline}"/>
+    ${points.map((point, index) => `<circle class="process-chart-point" cx="${point.x}" cy="${point.y}" r="5"><title>معامله ${index + 1}: ${point.score}/100</title></circle>`).join('')}
+    <text class="process-chart-label" x="${padding.left}" y="${height - 5}">قدیمی‌تر</text><text class="process-chart-label" x="${width - padding.right}" y="${height - 5}" text-anchor="end">جدیدتر</text>
+  </svg><div class="overview-empty">میانگین ${average.toFixed(0)} از ۱۰۰ در ${scored.length} معاملهٔ کامل‌شدهٔ اخیر</div>`;
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
     '&': '&amp;',
@@ -1125,12 +1204,17 @@ function renderOverview() {
   }, {})).sort((left, right) => right[1].pnl - left[1].pnl);
   const recent = [...state.trades].sort((left, right) => getTradeDateKey(right).localeCompare(getTradeDateKey(left))).slice(0, 6);
   const average = closed.length ? closed.reduce((sum, trade) => sum + tradePnl(trade), 0) / closed.length : 0;
+  const scoredTrades = state.trades.filter((trade) => getProcessScore(trade).complete);
+  const averageProcess = scoredTrades.length
+    ? scoredTrades.reduce((sum, trade) => sum + getProcessScore(trade).score, 0) / scoredTrades.length
+    : null;
   overviewView.innerHTML = `
     <div class="overview-heading"><div><span>گزارش عملکرد</span><h2>نمای کلی معاملات</h2></div><span class="overview-period">${closed.length} معاملهٔ بسته · ${state.trades.filter((trade) => trade.status === 'open').length} معاملهٔ باز</span></div>
     <div class="overview-grid">
       <section class="overview-block"><h3>عملکرد کلی</h3><div class="overview-stat"><span>میانگین سود/ضرر هر معامله</span><strong class="${average >= 0 ? 'positive' : 'negative'}">${average >= 0 ? '+' : '-'}$${Math.abs(average).toFixed(2)}</strong></div><div class="overview-stat"><span>بیشترین سود</span><strong class="positive">${closed.length ? '+$' + Math.max(...closed.map(tradePnl)).toFixed(2) : '—'}</strong></div><div class="overview-stat"><span>بیشترین ضرر</span><strong class="negative">${closed.length ? '-$' + Math.abs(Math.min(...closed.map(tradePnl))).toFixed(2) : '—'}</strong></div></section>
       <section class="overview-block"><h3>عملکرد بر اساس شبکه</h3>${networkRows.length ? networkRows.map(([name, value]) => `<div class="overview-stat"><span>${escapeHtml(name)} · ${value.count} معامله</span><strong class="${value.pnl >= 0 ? 'positive' : 'negative'}">${value.pnl >= 0 ? '+' : '-'}$${Math.abs(value.pnl).toFixed(2)}</strong></div>`).join('') : '<div class="overview-empty">هنوز معاملهٔ بسته‌ای برای گزارش وجود ندارد.</div>'}</section>
-      <section class="overview-block overview-recent"><h3>معاملات اخیر</h3>${recent.length ? `<div class="overview-list">${recent.map((trade) => { const pnl = tradePnl(trade); const isOpen = trade.status === 'open'; return `<div class="overview-trade"><div><strong>${escapeHtml(trade.token || 'بدون نام')}</strong><span>${escapeHtml(trade.network || '—')} · ${escapeHtml(getTradeDateKey(trade) || '—')}</span></div><strong class="${isOpen ? 'neutral' : pnl >= 0 ? 'positive' : 'negative'}">${isOpen ? 'باز' : `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`}</strong></div>`; }).join('')}</div>` : '<div class="overview-empty">هنوز معامله‌ای ثبت نشده است.</div>'}</section>
+      <section class="overview-block overview-recent"><h3>نمرهٔ فرآیند تصمیم</h3><div class="overview-stat"><span>میانگین معاملات دارای اطلاعات کامل</span><strong class="${averageProcess === null ? 'neutral' : averageProcess >= 80 ? 'positive' : averageProcess <= 40 ? 'negative' : 'neutral'}">${averageProcess === null ? '—' : `${averageProcess.toFixed(0)}/100`}</strong></div><p class="overview-empty">امتیاز از ثبت حالت ذهنی، ستاپ، حد ضرر، دلیل ورود و رعایت ساعت ۸ تا ۱۱ صبح ساخته می‌شود. اطلاعات ناقص نمرهٔ قطعی نمی‌گیرد؛ متن‌ها به‌صورت خودکار قضاوت نمی‌شوند.</p>${processTrendMarkup(state.trades)}</section>
+      <section class="overview-block overview-recent"><h3>معاملات اخیر</h3>${recent.length ? `<div class="overview-list">${recent.map((trade) => { const pnl = tradePnl(trade); const isOpen = trade.status === 'open'; return `<div class="overview-trade"><div><strong>${escapeHtml(trade.token || 'بدون نام')}</strong><span>${escapeHtml(trade.network || '—')} · ${escapeHtml(getTradeDateKey(trade) || '—')}</span>${processBadgeMarkup(trade)}</div><strong class="${isOpen ? 'neutral' : pnl >= 0 ? 'positive' : 'negative'}">${isOpen ? 'باز' : `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`}</strong></div>`; }).join('')}</div>` : '<div class="overview-empty">هنوز معامله‌ای ثبت نشده است.</div>'}</section>
     </div>`;
 }
 
@@ -1265,6 +1349,8 @@ function renderSelectedDay() {
         ${trade.closedAt ? `<div class="trade-meta">خروج: ${escapeHtml(trade.closedAt)}</div>` : ''}
         ${trade.entryMarketCap ? `<div class="trade-meta">مارکت‌کپ ورود: $${escapeHtml(trade.entryMarketCap)}</div>` : ''}
         ${trade.exitMarketCap ? `<div class="trade-meta">مارکت‌کپ خروج: $${escapeHtml(trade.exitMarketCap)}</div>` : ''}
+        ${trade.stopLoss ? `<div class="trade-meta">حد ضرر: ${escapeHtml(trade.stopLoss)}</div>` : ''}
+        <div>${processBadgeMarkup(trade)}</div>
         ${trade.riskLevel ? `<div class="trade-meta">ریسک: ${escapeHtml(trade.riskLevel)}</div>` : ''}
         ${safeExternalUrl(trade.txLink) ? `<div class="trade-meta"><a href="${escapeHtml(safeExternalUrl(trade.txLink))}" target="_blank" rel="noopener">لینک تراکنش</a></div>` : ''}
         ${trade.setup ? `<div class="trade-meta">ستاپ: ${escapeHtml(trade.setup)}</div>` : ''}
@@ -1308,6 +1394,7 @@ function fillForm(trade) {
   document.getElementById('status').value = trade.status || 'closed';
   document.getElementById('address').value = trade.address || '';
   document.getElementById('openedAt').value = (trade.openedAt || '').slice(0, 16);
+  document.getElementById('stopLoss').value = trade.stopLoss || '';
   document.getElementById('closedAt').value = (trade.closedAt || '').slice(0, 16);
   document.getElementById('entryMarketCap').value = trade.entryMarketCap ?? '';
   document.getElementById('exitMarketCap').value = trade.exitMarketCap ?? '';
@@ -1409,6 +1496,8 @@ function getFormValues() {
     status: document.getElementById('status').value,
     address: document.getElementById('address').value.trim(),
     openedAt: document.getElementById('openedAt').value,
+    entryTimeProvided: Boolean(document.getElementById('openedAt').value),
+    stopLoss: document.getElementById('stopLoss').value.trim(),
     closedAt: document.getElementById('closedAt').value,
     entryMarketCap: document.getElementById('entryMarketCap').value,
     exitMarketCap: document.getElementById('exitMarketCap').value,

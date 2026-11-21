@@ -548,6 +548,8 @@ app.post('/api/trades', async (req, res) => {
     token: String(payload.token || '').trim(),
     network: payload.network || 'Solana',
     address: payload.address || '',
+    entryTimeProvided: Boolean(payload.entryTimeProvided),
+    stopLoss: String(payload.stopLoss || '').trim(),
     riskLevel: payload.riskLevel || 'high',
     pnlOutcome: payload.pnlOutcome || 'profit',
     journalDate: payload.journalDate || toDateKey(new Date()),
