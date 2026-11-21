@@ -27,6 +27,12 @@ const pushEnableButton = document.getElementById('pushEnableBtn');
 const pushToast = document.getElementById('pushToast');
 const overviewView = document.getElementById('overviewView');
 const calendarWrap = document.querySelector('.calendar-wrap');
+const summaryGridElement = document.getElementById('summaryGrid');
+const masterView = document.getElementById('masterView');
+const masterChatLog = document.getElementById('masterChatLog');
+const masterChatForm = document.getElementById('masterChatForm');
+const masterChatInput = document.getElementById('masterChatInput');
+const masterChatSend = document.getElementById('masterChatSend');
 const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
@@ -795,8 +801,8 @@ function openTradeChart(trade) {
 
 function updateSyncStatus(online) {
   syncLabel.textContent = state.remoteEnabled ? 'همگام‌سازی ابری' : 'ذخیرهٔ محلی';
-  syncState.textContent = state.remoteEnabled ? (online ? 'متصل' : 'قطع') : 'فقط این دستگاه';
-  syncState.style.color = state.remoteEnabled && online ? 'var(--green)' : 'var(--yellow)';
+  syncState.textContent = state.remoteEnabled ? (online ? 'متصل' : 'قطع') : 'فعال';
+  syncState.style.color = (!state.remoteEnabled || online) ? 'var(--green)' : 'var(--yellow)';
 }
 
 function promptForAccessKey() {
@@ -1129,11 +1135,14 @@ function renderOverview() {
 }
 
 function setJournalView(view) {
-  activeJournalView = view === 'overview' ? 'overview' : 'journal';
+  activeJournalView = view === 'overview' || view === 'master' ? view : 'journal';
   const overview = activeJournalView === 'overview';
+  const master = activeJournalView === 'master';
   if (overviewView) overviewView.hidden = !overview;
-  if (calendarWrap) calendarWrap.hidden = overview;
-  if (overview && tradeForm) tradeForm.style.display = 'none';
+  if (masterView) masterView.hidden = !master;
+  if (calendarWrap) calendarWrap.hidden = overview || master;
+  if (summaryGridElement) summaryGridElement.hidden = master;
+  if ((overview || master) && tradeForm) tradeForm.style.display = 'none';
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
     button.classList.toggle('active', active);
@@ -1439,6 +1448,40 @@ function renderAll() {
 }
 
 journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
+
+function appendMasterMessage(role, text) {
+  if (!masterChatLog) return;
+  const message = document.createElement('div');
+  message.className = `master-message ${role}`;
+  message.textContent = text;
+  masterChatLog.appendChild(message);
+  masterChatLog.scrollTop = masterChatLog.scrollHeight;
+}
+
+masterChatForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const message = masterChatInput?.value.trim();
+  if (!message) return;
+  appendMasterMessage('user', message);
+  masterChatInput.value = '';
+  masterChatSend.disabled = true;
+  masterChatSend.textContent = 'در حال پاسخ...';
+  try {
+    const response = await apiFetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'پاسخ هوش مصنوعی دریافت نشد.');
+    appendMasterMessage('assistant', payload.reply);
+  } catch (error) {
+    appendMasterMessage('assistant', error.message || 'خطا در ارتباط با استاد.');
+  } finally {
+    masterChatSend.disabled = false;
+    masterChatSend.textContent = 'ارسال';
+  }
+});
 
 document.getElementById('newTradeBtn').addEventListener('click', () => {
   setJournalView('journal');

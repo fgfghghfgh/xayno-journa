@@ -17,6 +17,9 @@ const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || '';
 const WEB_PUSH_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || '';
 const WEB_PUSH_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || '';
 const WEB_PUSH_SUBJECT = process.env.WEB_PUSH_SUBJECT || 'mailto:notifications@xayno.app';
+const AI_API_KEY = process.env.AI_API_KEY || '';
+const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
+const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
 const journalChartCache = new Map();
 const journalSupplyCache = new Map();
@@ -166,10 +169,19 @@ function buildSummary(trades) {
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
-app.use(express.static(PUBLIC_DIR));
+app.use(express.static(PUBLIC_DIR, {
+  maxAge: 0,
+  setHeaders(res, filePath) {
+    if (/\.(html|js|css|json)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  },
+}));
 
 app.get('/api/config', (_req, res) => {
-  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true, chartEnabled: Boolean(BIRDEYE_API_KEY), pushEnabled: Boolean(webPush), pushPublicKey: webPush ? WEB_PUSH_PUBLIC_KEY : '' });
+  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true, chartEnabled: Boolean(BIRDEYE_API_KEY), aiEnabled: Boolean(AI_API_KEY), pushEnabled: Boolean(webPush), pushPublicKey: webPush ? WEB_PUSH_PUBLIC_KEY : '' });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -177,6 +189,52 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/trades', requireJournalAccess);
+
+app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
+  const message = String(req.body?.message || '').trim();
+  if (!message) return res.status(400).json({ message: 'پیام خالی است.' });
+  if (!AI_API_KEY) return res.status(503).json({ message: 'کلید هوش مصنوعی در سرور تنظیم نشده است. AI_API_KEY را در متغیرهای محیطی اضافه کن.' });
+
+  const trades = readTrades();
+  const systemPrompt = [
+    'تو مربی روان‌شناسی ترید و خودآگاهی به‌نام «استاد» هستی.',
+    'فارسی روان و طبیعی صحبت کن؛ همدل اما رک باش، بهونه‌ها را محترمانه قبول نکن و فقط تأییدکننده نباش.',
+    'هدف تقویت استقلال و جلوگیری از تکرار اشتباه‌های قبلی است؛ وابستگی‌زا نباش.',
+    'فقط از داده‌های ژورنال تحویل‌شده استفاده کن و به‌جای حدس، کمبود داده را صریح بیان کن.',
+    'با کمتر از ۳۰ ترید نتیجه آماری قطعی نده و در صورت نشانه‌های فشار شدید، ناامیدی، قمارگونه‌شدن یا درگیری معیشت، مهربانانه پیشنهاد گفتگو با متخصص انسانی بده.',
+    'مربی درمان‌گر نیستی.',
+  ].join(' ');
+
+  try {
+    const response = await fetch(AI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${AI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        temperature: 0.6,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'system', content: `داده‌های ژورنال فعلی کاربر به‌صورت JSON: ${JSON.stringify(trades).slice(0, 120000)}` },
+          { role: 'user', content: message },
+        ],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const apiMessage = payload.error?.message || payload.message;
+      return res.status(502).json({ message: apiMessage || 'ارتباط با سرویس هوش مصنوعی ناموفق بود.' });
+    }
+    const reply = payload.choices?.[0]?.message?.content;
+    if (!reply) return res.status(502).json({ message: 'سرویس هوش مصنوعی پاسخ متنی برنگرداند.' });
+    return res.json({ reply });
+  } catch (error) {
+    return res.status(503).json({ message: 'سرویس هوش مصنوعی در دسترس نیست یا پاسخ‌دادن طول کشید.' });
+  }
+});
 
 app.post('/api/push/subscribe', requireJournalAccess, (req, res) => {
   if (!webPush) return res.status(503).json({ message: 'اعلان وب هنوز در سرور تنظیم نشده است.' });

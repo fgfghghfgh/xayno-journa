@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b1013" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>XAYNO Journal</title>
     <style>
@@ -307,6 +310,21 @@
       .overview-view .positive { color: var(--green); }
       .overview-view .negative { color: var(--red); }
       .overview-view .neutral { color: var(--yellow); }
+
+      .master-view[hidden] { display: none !important; }
+      .master-view { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+      .master-card { min-height: 150px; padding: 18px; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(15,23,27,.72); }
+      .master-card h2 { margin: 0 0 8px; font-size: 15px; }
+      .master-card p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.9; }
+      .master-chat { grid-column: 1 / -1; min-height: 320px; }
+      .master-chat-log { min-height: 220px; max-height: 420px; overflow: auto; margin-bottom: 12px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); }
+      .master-message { max-width: 78%; margin: 8px 0; padding: 10px 12px; border-radius: 12px; line-height: 1.8; font-size: 12px; white-space: pre-wrap; }
+      .master-message.user { margin-right: auto; background: rgba(0,212,245,.10); border: 1px solid rgba(0,212,245,.15); }
+      .master-message.assistant { margin-left: auto; background: rgba(0,245,160,.09); border: 1px solid rgba(0,245,160,.14); }
+      .master-chat-form { display: flex; gap: 8px; }
+      .master-chat-form textarea { flex: 1; min-height: 48px; resize: vertical; border: 1px solid rgba(255,255,255,.10); border-radius: 10px; background: rgba(255,255,255,.04); color: var(--text); padding: 10px 12px; }
+      .master-chat-form button { border: 0; border-radius: 10px; background: var(--green); color: #06110d; padding: 0 18px; font-weight: 800; cursor: pointer; }
+      .master-chat-form button:disabled { opacity: .55; cursor: wait; }
 
       .calendar-wrap {
         display: grid;
@@ -819,6 +837,9 @@
         .calendar-wrap {
           grid-template-columns: 1fr;
         }
+        .master-view { grid-template-columns: 1fr; }
+        .master-chat { grid-column: auto; }
+        .master-message { max-width: 92%; }
       }
 
       @media (max-width: 640px) {
@@ -826,6 +847,22 @@
         .overview-recent { grid-column: auto; }
         .overview-heading { align-items: start; flex-direction: column; }
         .push-enable-btn { padding: 7px 9px; font-size: 11px; }
+        .xh-nav {
+          order: 3;
+          width: 100%;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 6px;
+        }
+        .xh-nav-btn {
+          min-width: 0;
+          padding: 10px 6px;
+          text-align: center;
+        }
+        .xh-live-badge {
+          max-width: 100%;
+          flex-wrap: wrap;
+        }
         body {
           padding: 10px;
         }
@@ -861,6 +898,7 @@
           <nav class="xh-nav" aria-label="main navigation">
             <button type="button" class="xh-nav-btn active" data-journal-view="journal">ژورنال</button>
             <button type="button" class="xh-nav-btn" data-journal-view="overview">نمای کلی</button>
+            <button type="button" class="xh-nav-btn" data-journal-view="master">استاد</button>
           </nav>
 
           <button id="newTradeBtn" type="button" class="action-btn">+ ثبت معامله</button>
@@ -882,6 +920,29 @@
           <div class="summary-grid" id="summaryGrid"></div>
 
           <section id="overviewView" class="overview-view" hidden></section>
+
+          <section id="masterView" class="master-view" hidden>
+            <article class="master-card">
+              <h2>گزارش</h2>
+              <p>گزارش خودکار و تحلیل وضعیت در قدم‌های بعدی اضافه می‌شود.</p>
+            </article>
+            <article class="master-card">
+              <h2>جلسه</h2>
+              <p>جلسه خصوصی، حافظه و تمرین‌های هفتگی در قدم‌های بعدی اضافه می‌شود.</p>
+            </article>
+            <article class="master-card">
+              <h2>چت</h2>
+              <p>برای تست اتصال، یک پیام ساده به مربی هوش مصنوعی بفرست.</p>
+            </article>
+            <article class="master-card master-chat">
+              <h2>چت با استاد</h2>
+              <div id="masterChatLog" class="master-chat-log" aria-live="polite"></div>
+              <form id="masterChatForm" class="master-chat-form">
+                <textarea id="masterChatInput" placeholder="مثلاً: روی اشتباه‌های تکراری‌ام کمکم کن"></textarea>
+                <button id="masterChatSend" type="submit">ارسال</button>
+              </form>
+            </article>
+          </section>
 
           <div class="calendar-wrap">
             <section class="xh-glass panel">
@@ -1051,6 +1112,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=20261121-step1"></script>
   </body>
 </html>
