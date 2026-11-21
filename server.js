@@ -20,6 +20,7 @@ const WEB_PUSH_SUBJECT = process.env.WEB_PUSH_SUBJECT || 'mailto:notifications@x
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
 const journalChartCache = new Map();
 const journalSupplyCache = new Map();
@@ -186,6 +187,109 @@ app.get('/api/config', (_req, res) => {
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString(), remoteEnabled: REMOTE_ENABLED });
+});
+
+app.post('/api/trade-lookup', requireJournalAccess, async (req, res) => {
+  const address = String(req.body?.address || '').trim();
+  const txLink = String(req.body?.txLink || '').trim();
+  if (!address && !txLink) return res.status(400).json({ message: 'آدرس قرارداد یا لینک تراکنش وارد نشده است.' });
+
+  let contractAddress = address;
+  let signature = '';
+  if (txLink) {
+    try {
+      const url = new URL(txLink);
+      const segments = url.pathname.split('/').filter(Boolean);
+      const txIndex = segments.findIndex((segment) => segment.toLowerCase() === 'tx');
+      if (txIndex >= 0 && segments[txIndex + 1]) signature = segments[txIndex + 1];
+      if (!contractAddress) {
+        const addressParam = url.searchParams.get('address');
+        if (addressParam) contractAddress = addressParam;
+      }
+    } catch (_error) {
+      if (!contractAddress) {
+        const parts = txLink.trim().split(/[/?#]/).filter(Boolean);
+        signature = parts[parts.length - 1] || '';
+      }
+    }
+  }
+
+  const result = {
+    token: '',
+    network: '',
+    address: contractAddress,
+    entryMarketCap: '',
+    exitMarketCap: '',
+    openedAt: '',
+    closedAt: '',
+    investAmount: '',
+    pnlPercent: '',
+    pnlDollar: '',
+  };
+
+  if (contractAddress) {
+    if (!/^[A-Za-z0-9:_-]{1,128}$/.test(contractAddress)) {
+      return res.status(400).json({ message: 'آدرس قرارداد معتبر نیست.' });
+    }
+    try {
+      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(contractAddress)}`, {
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (response.ok) {
+        const payload = await response.json();
+        const pairs = Array.isArray(payload.pairs) ? payload.pairs : [];
+        const matching = pairs.filter((pair) =>
+          pair?.baseToken?.address?.toLowerCase() === contractAddress.toLowerCase()
+          || pair?.quoteToken?.address?.toLowerCase() === contractAddress.toLowerCase()
+        );
+        const pair = [...matching].sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0))[0];
+        if (pair) {
+          const baseIsContract = pair.baseToken?.address?.toLowerCase() === contractAddress.toLowerCase();
+          result.token = String(baseIsContract ? pair.baseToken?.name : pair.quoteToken?.name || '').trim();
+          result.network = ({
+            solana: 'Solana',
+            ethereum: 'Ethereum',
+            base: 'Base',
+            bsc: 'BSC',
+            arbitrum: 'Arbitrum',
+          })[pair.chainId] || '';
+          const marketCap = Number(pair.marketCap ?? pair.fdv);
+          if (Number.isFinite(marketCap) && marketCap > 0) result.entryMarketCap = marketCap;
+        }
+      }
+    } catch (_error) {
+      // Leave fields empty; the UI will report that no verified data was found.
+    }
+  }
+
+  if (HELIUS_API_KEY && signature) {
+    try {
+      const response = await fetch(`https://api.helius.xyz/v0/transactions/?api-key=${encodeURIComponent(HELIUS_API_KEY)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactions: [signature] }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (response.ok) {
+        const payload = await response.json();
+        const transaction = Array.isArray(payload) ? payload[0] : payload;
+        const timestamp = Number(transaction?.timestamp);
+        if (Number.isFinite(timestamp) && timestamp > 0) result.openedAt = new Date(timestamp * 1000).toISOString();
+        if (Array.isArray(transaction?.nativeTransfers) && transaction.nativeTransfers.length) {
+          const solTransfer = transaction.nativeTransfers.find((transfer) => Number(transfer.amount) > 0);
+          if (solTransfer) {
+            const lamports = Number(solTransfer.amount);
+            if (Number.isFinite(lamports) && lamports > 0) result.investAmount = lamports / 1e9;
+          }
+        }
+      }
+    } catch (_error) {
+      // Leave unavailable transaction fields empty rather than guessing.
+    }
+  }
+
+  const found = Boolean(result.token || result.entryMarketCap || result.openedAt);
+  return res.json({ found, ...result });
 });
 
 app.use('/api/trades', requireJournalAccess);

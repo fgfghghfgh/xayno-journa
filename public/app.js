@@ -1344,6 +1344,62 @@ function resetForm() {
   saveStatus.hidden = true;
 }
 
+function datetimeLocalFromIso(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
+}
+
+async function lookupTradeDetails() {
+  const address = document.getElementById('address').value.trim();
+  const txLink = document.getElementById('txLink').value.trim();
+  const status = document.getElementById('tradeLookupStatus');
+  const button = document.getElementById('tradeLookupBtn');
+  if (!address && !txLink) {
+    status.textContent = 'ابتدا آدرس قرارداد یا لینک تراکنش را وارد کن.';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'در حال دریافت اطلاعات تاییدشده...';
+  try {
+    const response = await apiFetch('/api/trade-lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, txLink }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'دریافت اطلاعات ناموفق بود.');
+
+    if (payload.address && !document.getElementById('address').value.trim()) {
+      document.getElementById('address').value = payload.address;
+    }
+    if (payload.token) document.getElementById('token').value = payload.token;
+    if (payload.network) document.getElementById('network').value = payload.network;
+    if (payload.entryMarketCap !== '' && payload.entryMarketCap != null) {
+      document.getElementById('entryMarketCap').value = payload.entryMarketCap;
+    }
+    if (payload.exitMarketCap !== '' && payload.exitMarketCap != null) {
+      document.getElementById('exitMarketCap').value = payload.exitMarketCap;
+    }
+    if (payload.openedAt) document.getElementById('openedAt').value = datetimeLocalFromIso(payload.openedAt);
+    if (payload.closedAt) document.getElementById('closedAt').value = datetimeLocalFromIso(payload.closedAt);
+    if (payload.investAmount !== '' && payload.investAmount != null) {
+      document.getElementById('investAmount').value = payload.investAmount;
+    }
+    if (payload.pnlPercent !== '' && payload.pnlPercent != null) document.getElementById('pnlPercent').value = payload.pnlPercent;
+    if (payload.pnlDollar !== '' && payload.pnlDollar != null) document.getElementById('pnlDollar').value = payload.pnlDollar;
+    status.textContent = payload.found
+      ? 'اطلاعات تاییدشده دریافت شد؛ فیلدهای ذهنی دست‌نخورده باقی مانده‌اند.'
+      : 'دادهٔ تاییدشده‌ای پیدا نشد؛ هیچ مقداری حدس زده نشد.';
+  } catch (error) {
+    status.textContent = error.message || 'دریافت اطلاعات ناموفق بود.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function getFormValues() {
   return {
     id: document.getElementById('tradeId').value || undefined,
@@ -1497,6 +1553,9 @@ document.getElementById('cancelFormBtn').addEventListener('click', () => {
 });
 
 document.getElementById('tradeForm').addEventListener('submit', saveTrade);
+document.getElementById('tradeLookupBtn')?.addEventListener('click', lookupTradeDetails);
+document.getElementById('address')?.addEventListener('change', lookupTradeDetails);
+document.getElementById('txLink')?.addEventListener('change', lookupTradeDetails);
 pushEnableButton?.addEventListener('click', enableJournalPush);
 document.getElementById('prevMonthBtn').addEventListener('click', () => {
   state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() - 1, 1);
