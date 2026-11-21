@@ -333,6 +333,23 @@
       .master-report-status { color: var(--text-dim); font-size: 11px; }
       .master-report-result { margin-top: 14px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); color: var(--text-muted); font-size: 12px; line-height: 2; white-space: pre-wrap; }
       .master-report-result:empty { display: none; }
+      .checkin-card { grid-column: 1 / -1; }
+      .checkin-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+      .checkin-form label { display: grid; gap: 7px; color: var(--text-muted); font-size: 12px; }
+      .checkin-form select { min-width: 0; min-height: 42px; border: 1px solid rgba(255,255,255,.1); border-radius: 9px; background: #10191e; color: var(--text); padding: 0 10px; }
+      .checkin-form button { min-height: 42px; align-self: end; border: 0; border-radius: 9px; background: var(--green); color: #06110d; padding: 0 16px; font-weight: 800; cursor: pointer; }
+      .checkin-form button:disabled { opacity: .55; cursor: wait; }
+      .checkin-feedback { margin-top: 14px; padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; font-size: 12px; line-height: 1.9; }
+      .checkin-feedback[hidden] { display: none; }
+      .checkin-feedback.green { border-color: rgba(0,245,160,.28); color: var(--green); }
+      .checkin-feedback.yellow { border-color: rgba(251,191,36,.28); color: var(--yellow); }
+      .checkin-feedback.red { border-color: rgba(255,74,107,.28); color: var(--red); }
+      .checkin-history { display: grid; gap: 7px; margin-top: 14px; }
+      .checkin-history-row { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid rgba(255,255,255,.06); padding-top: 8px; color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+      .checkin-history-row strong.green { color: var(--green); }
+      .checkin-history-row strong.yellow { color: var(--yellow); }
+      .checkin-history-row strong.red { color: var(--red); }
+      .checkin-local-note { margin-top: 10px !important; color: var(--text-dim); font-size: 10px !important; }
       .api-settings[hidden] { display: none !important; }
       .api-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
       .api-settings-heading { grid-column: 1 / -1; }
@@ -879,6 +896,8 @@
         .master-view { grid-template-columns: 1fr; }
         .master-chat { grid-column: auto; }
         .master-message { max-width: 92%; }
+        .checkin-card { grid-column: auto; }
+        .checkin-form { grid-template-columns: 1fr; }
       }
 
       @media (max-width: 640px) {
@@ -995,6 +1014,46 @@
           </section>
 
           <section id="masterView" class="master-view" hidden>
+            <article class="master-card checkin-card">
+              <h2>چک‌این قبل از شروع روز</h2>
+              <p>پیش از معامله، وضعیت امروزت را ثبت کن. چراغ فقط یادآور خودآگاهی است و تضمین یا سیگنال معامله نیست.</p>
+              <form id="dailyCheckinForm" class="checkin-form">
+                <label>کیفیت خواب
+                  <select id="checkinSleep" required>
+                    <option value="">انتخاب کن</option>
+                    <option value="1">۱ · خیلی بد</option>
+                    <option value="2">۲ · بد</option>
+                    <option value="3">۳ · معمولی</option>
+                    <option value="4">۴ · خوب</option>
+                    <option value="5">۵ · خیلی خوب</option>
+                  </select>
+                </label>
+                <label>میزان استرس
+                  <select id="checkinStress" required>
+                    <option value="">انتخاب کن</option>
+                    <option value="1">۱ · خیلی کم</option>
+                    <option value="2">۲ · کم</option>
+                    <option value="3">۳ · متوسط</option>
+                    <option value="4">۴ · زیاد</option>
+                    <option value="5">۵ · خیلی زیاد</option>
+                  </select>
+                </label>
+                <label>حال روحی
+                  <select id="checkinMood" required>
+                    <option value="">انتخاب کن</option>
+                    <option value="1">۱ · خیلی بد</option>
+                    <option value="2">۲ · بد</option>
+                    <option value="3">۳ · معمولی</option>
+                    <option value="4">۴ · خوب</option>
+                    <option value="5">۵ · خیلی خوب</option>
+                  </select>
+                </label>
+                <button id="saveCheckinBtn" type="submit">ذخیرهٔ چک‌این امروز</button>
+              </form>
+              <div id="checkinFeedback" class="checkin-feedback" role="status" aria-live="polite" hidden></div>
+              <div id="checkinHistory" class="checkin-history"></div>
+              <p id="checkinLocalNote" class="checkin-local-note">پاسخ‌ها فقط در همین مرورگر و دستگاه ذخیره می‌شوند و با فضای ابری همگام نیستند.</p>
+            </article>
             <article class="master-card master-report">
               <h2>گزارش وضعیت من</h2>
               <p>بر اساس معاملات ثبت‌شده، الگوها و یک تمرکز عملی برای این هفته را مرور کن. گزارش درمانی یا توصیهٔ ورود و خروج نیست.</p>

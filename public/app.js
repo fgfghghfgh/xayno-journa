@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'xayno-local-journal';
+const CHECKIN_STORAGE_KEY = 'xayno-daily-checkins-v1';
 const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
 function localDateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -10,6 +11,7 @@ const state = {
   selectedDate: localDateKey(new Date()),
   formImages: [],
   remoteEnabled: false,
+  dailyCheckins: [],
 };
 
 const summaryGrid = document.getElementById('summaryGrid');
@@ -37,6 +39,10 @@ const masterChatSend = document.getElementById('masterChatSend');
 const masterReportButton = document.getElementById('masterReportBtn');
 const masterReportStatus = document.getElementById('masterReportStatus');
 const masterReportResult = document.getElementById('masterReportResult');
+const dailyCheckinForm = document.getElementById('dailyCheckinForm');
+const checkinFeedback = document.getElementById('checkinFeedback');
+const checkinHistory = document.getElementById('checkinHistory');
+const checkinLocalNote = document.getElementById('checkinLocalNote');
 const chatApiState = document.getElementById('chatApiState');
 const reportApiState = document.getElementById('reportApiState');
 const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
@@ -1235,6 +1241,7 @@ function setJournalView(view) {
   if (calendarWrap) calendarWrap.hidden = overview || master || settings;
   if (summaryGridElement) summaryGridElement.hidden = master || settings;
   if ((overview || master || settings) && tradeForm) tradeForm.style.display = 'none';
+  if (master) renderDailyCheckin();
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
     button.classList.toggle('active', active);
@@ -1598,6 +1605,7 @@ function renderAll() {
   renderOverview();
   renderCalendar();
   renderSelectedDay();
+  renderCheckinHistory();
 }
 
 journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
@@ -1637,6 +1645,135 @@ document.querySelectorAll('[data-test-api]').forEach((button) => {
       button.textContent = originalText;
     }
   });
+});
+
+function loadDailyCheckins() {
+  const raw = localStorage.getItem(CHECKIN_STORAGE_KEY);
+  if (!raw) return [];
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error('ساختار ذخیرهٔ چک‌این قابل خواندن نیست.');
+  return parsed.filter((record) => record
+    && /^\d{4}-\d{2}-\d{2}$/.test(record.date)
+    && [record.sleep, record.stress, record.mood].every((value) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 5));
+}
+
+function getCheckinAssessment(checkin) {
+  const sleep = Number(checkin.sleep);
+  const stress = Number(checkin.stress);
+  const mood = Number(checkin.mood);
+  const isRed = sleep === 1 || stress === 5 || mood === 1 || (stress >= 4 && (sleep <= 2 || mood <= 2));
+  if (isRed) {
+    return {
+      status: 'red',
+      label: 'قرمز',
+      recommendation: 'امروز ترید نکن و دنبال جبران نباش؛ استراحت کن. اگر این فشار یا حال بد ادامه‌دار است، با یک متخصص انسانی صحبت کن.',
+    };
+  }
+  const isYellow = sleep <= 2 || stress >= 4 || mood <= 2 || sleep + mood <= 5;
+  if (isYellow) {
+    return {
+      status: 'yellow',
+      label: 'زرد',
+      recommendation: 'امروز محتاط باش؛ اگر طبق برنامه‌ات معامله می‌کنی، حداکثر دو معامله با نصف سایز معمول و بدون افزایش ریسک. اگر تمرکزت افت کرد، توقف کن.',
+    };
+  }
+  return {
+    status: 'green',
+    label: 'سبز',
+    recommendation: 'شرایط اولیه مناسب‌تر به نظر می‌رسد؛ طبق برنامهٔ خودت عمل کن. چراغ سبز مجوز افزایش سایز یا شکستن قوانینت نیست.',
+  };
+}
+
+function getCheckinHistoryInsight(checkins) {
+  const dailyPnl = new Map();
+  state.trades.forEach((trade) => {
+    if (trade.status !== 'closed') return;
+    const date = getTradeDateKey(trade);
+    if (!date) return;
+    dailyPnl.set(date, (dailyPnl.get(date) || 0) + tradePnl(trade));
+  });
+  const buckets = new Map([
+    ['green', { label: 'سبز', count: 0, pnl: 0 }],
+    ['yellow', { label: 'زرد', count: 0, pnl: 0 }],
+    ['red', { label: 'قرمز', count: 0, pnl: 0 }],
+  ]);
+  let pairedDays = 0;
+  checkins.forEach((checkin) => {
+    if (!dailyPnl.has(checkin.date)) return;
+    const assessment = getCheckinAssessment(checkin);
+    const bucket = buckets.get(assessment.status);
+    bucket.count += 1;
+    bucket.pnl += dailyPnl.get(checkin.date);
+    pairedDays += 1;
+  });
+  const comparable = [...buckets.entries()]
+    .map(([status, value]) => ({ status, ...value, average: value.count ? value.pnl / value.count : 0 }))
+    .filter((bucket) => bucket.count >= 5)
+    .sort((left, right) => left.average - right.average);
+  if (pairedDays < 10 || comparable.length < 2) {
+    return `شخصی‌سازی از تاریخچه هنوز انجام نمی‌شود: ${pairedDays}/10 روز دارای چک‌این و معاملهٔ بسته ثبت شده. این مقایسه فقط پس از حداقل ۱۰ روز و ۵ روز در هر یک از دست‌کم دو وضعیت، به‌صورت مشاهدهٔ شخصی و نه علت یا پیش‌بینی نمایش داده می‌شود.`;
+  }
+  const lower = comparable[0];
+  const higher = comparable[comparable.length - 1];
+  const average = (value) => `${value >= 0 ? '+' : '-'}$${Math.abs(value).toFixed(2)}`;
+  return `مشاهدهٔ شخصی ژورنال: میانگین نتیجهٔ روزهای ${lower.label} در ${lower.count} روز ${average(lower.average)} و روزهای ${higher.label} در ${higher.count} روز ${average(higher.average)} بوده است. این فقط همراهی در داده‌های گذشته است، نه علت یا پیش‌بینی؛ آن را برای بازبینی برنامه‌ات ببین، نه سیگنال ورود و خروج.`;
+}
+
+function renderDailyCheckin() {
+  if (!dailyCheckinForm) return;
+  const today = localDateKey(new Date());
+  const todayRecord = state.dailyCheckins.find((record) => record.date === today);
+  for (const [field, value] of [['sleep', todayRecord?.sleep], ['stress', todayRecord?.stress], ['mood', todayRecord?.mood]]) {
+    document.getElementById(`checkin${field[0].toUpperCase()}${field.slice(1)}`).value = value ? String(value) : '';
+  }
+  const submitButton = document.getElementById('saveCheckinBtn');
+  submitButton.textContent = todayRecord ? 'به‌روزرسانی چک‌این امروز' : 'ذخیرهٔ چک‌این امروز';
+  if (todayRecord) {
+    const assessment = getCheckinAssessment(todayRecord);
+    checkinFeedback.className = `checkin-feedback ${assessment.status}`;
+    checkinFeedback.textContent = `چراغ ${assessment.label}: ${assessment.recommendation}`;
+    checkinFeedback.hidden = false;
+  } else {
+    checkinFeedback.hidden = true;
+    checkinFeedback.textContent = '';
+  }
+
+  renderCheckinHistory();
+}
+
+function renderCheckinHistory() {
+  const recent = [...state.dailyCheckins].sort((left, right) => right.date.localeCompare(left.date)).slice(0, 7);
+  checkinHistory.innerHTML = recent.length
+    ? recent.map((record) => {
+      const assessment = getCheckinAssessment(record);
+      const date = new Date(`${record.date}T00:00:00`).toLocaleDateString('fa-IR', { month: 'short', day: 'numeric' });
+      return `<div class="checkin-history-row"><span>${date} · خواب ${record.sleep}/۵ · استرس ${record.stress}/۵ · حال ${record.mood}/۵</span><strong class="${assessment.status}">${assessment.label}</strong></div>`;
+    }).join('') + `<div class="checkin-history-row"><span>${getCheckinHistoryInsight(state.dailyCheckins)}</span></div>`
+    : '<div class="overview-empty">هنوز چک‌این روزانه‌ای ثبت نشده است.</div>';
+}
+
+dailyCheckinForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const record = {
+    date: localDateKey(new Date()),
+    sleep: Number(document.getElementById('checkinSleep').value),
+    stress: Number(document.getElementById('checkinStress').value),
+    mood: Number(document.getElementById('checkinMood').value),
+    updatedAt: new Date().toISOString(),
+  };
+  if (![record.sleep, record.stress, record.mood].every((value) => Number.isInteger(value) && value >= 1 && value <= 5)) {
+    checkinLocalNote.textContent = 'هر سه پاسخ را با مقیاس ۱ تا ۵ انتخاب کن.';
+    return;
+  }
+  try {
+    const next = [...state.dailyCheckins.filter((item) => item.date !== record.date), record];
+    localStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(next));
+    state.dailyCheckins = next;
+    checkinLocalNote.textContent = 'چک‌این فقط روی همین مرورگر ذخیره شد؛ با فضای ابری همگام نمی‌شود.';
+    renderDailyCheckin();
+  } catch (error) {
+    checkinLocalNote.textContent = 'ذخیرهٔ چک‌این ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
+  }
 });
 
 masterReportButton?.addEventListener('click', async () => {
@@ -1737,6 +1874,12 @@ async function hydrateApp() {
     state.remoteEnabled = false;
   }
   updateSyncStatus(false);
+  try {
+    state.dailyCheckins = loadDailyCheckins();
+  } catch (error) {
+    state.dailyCheckins = [];
+    checkinLocalNote.textContent = 'خواندن چک‌این‌های قبلی ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
+  }
   const pendingLocalTrades = readLocalTrades();
   const serverTrades = await fetchServerTrades();
   if (Array.isArray(serverTrades) && (serverTrades.length || state.remoteEnabled)) {
