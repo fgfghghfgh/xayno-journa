@@ -326,6 +326,13 @@
       .master-card { min-height: 150px; padding: 18px; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(15,23,27,.72); }
       .master-card h2 { margin: 0 0 8px; font-size: 15px; }
       .master-card p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.9; }
+      .master-report { grid-column: 1 / -1; }
+      .master-report-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+      .master-report-actions button { min-height: 40px; border: 0; border-radius: 10px; background: var(--green); color: #06110d; padding: 0 16px; font-weight: 800; cursor: pointer; }
+      .master-report-actions button:disabled { opacity: .55; cursor: wait; }
+      .master-report-status { color: var(--text-dim); font-size: 11px; }
+      .master-report-result { margin-top: 14px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); color: var(--text-muted); font-size: 12px; line-height: 2; white-space: pre-wrap; }
+      .master-report-result:empty { display: none; }
       .master-chat { grid-column: 1 / -1; min-height: 320px; }
       .master-chat-log { min-height: 220px; max-height: 420px; overflow: auto; margin-bottom: 12px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); }
       .master-message { max-width: 78%; margin: 8px 0; padding: 10px 12px; border-radius: 12px; line-height: 1.8; font-size: 12px; white-space: pre-wrap; }
@@ -937,9 +944,14 @@
           <section id="overviewView" class="overview-view" hidden></section>
 
           <section id="masterView" class="master-view" hidden>
-            <article class="master-card">
-              <h2>گزارش</h2>
-              <p>گزارش خودکار و تحلیل وضعیت در قدم‌های بعدی اضافه می‌شود.</p>
+            <article class="master-card master-report">
+              <h2>گزارش وضعیت من</h2>
+              <p>بر اساس معاملات ثبت‌شده، الگوها و یک تمرکز عملی برای این هفته را مرور کن. گزارش درمانی یا توصیهٔ ورود و خروج نیست.</p>
+              <div class="master-report-actions">
+                <button id="masterReportBtn" type="button">ساخت گزارش</button>
+                <span id="masterReportStatus" class="master-report-status" role="status" aria-live="polite"></span>
+              </div>
+              <div id="masterReportResult" class="master-report-result" aria-live="polite"></div>
             </article>
             <article class="master-card">
               <h2>جلسه</h2>

@@ -33,6 +33,9 @@ const masterChatLog = document.getElementById('masterChatLog');
 const masterChatForm = document.getElementById('masterChatForm');
 const masterChatInput = document.getElementById('masterChatInput');
 const masterChatSend = document.getElementById('masterChatSend');
+const masterReportButton = document.getElementById('masterReportBtn');
+const masterReportStatus = document.getElementById('masterReportStatus');
+const masterReportResult = document.getElementById('masterReportResult');
 const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
@@ -1593,6 +1596,32 @@ function renderAll() {
 }
 
 journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
+
+masterReportButton?.addEventListener('click', async () => {
+  masterReportButton.disabled = true;
+  masterReportButton.textContent = 'در حال تحلیل...';
+  masterReportStatus.textContent = 'معاملات و تصاویر چارت بررسی می‌شوند؛ ممکن است کمی طول بکشد.';
+  try {
+    const response = await apiFetch('/api/ai/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'ساخت گزارش ناموفق بود.');
+    masterReportResult.textContent = payload.report;
+    const generatedAt = payload.generatedAt ? new Date(payload.generatedAt).toLocaleString('fa-IR') : '';
+    const imageStatus = payload.omittedImages
+      ? ` · ${payload.includedImages} تصویر بررسی شد؛ ${payload.omittedImages} تصویر به محدودیت حجم/تعداد خورد`
+      : ` · ${payload.includedImages} تصویر بررسی شد`;
+    masterReportStatus.textContent = `${payload.tradeCount} معامله · ${generatedAt}${imageStatus}`;
+  } catch (error) {
+    masterReportStatus.textContent = error.message || 'ساخت گزارش انجام نشد.';
+  } finally {
+    masterReportButton.disabled = false;
+    masterReportButton.textContent = 'ساخت دوبارهٔ گزارش';
+  }
+});
 
 function appendMasterMessage(role, text) {
   if (!masterChatLog) return;

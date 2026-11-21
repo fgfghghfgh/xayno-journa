@@ -340,6 +340,127 @@ app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
   }
 });
 
+app.post('/api/ai/report', requireJournalAccess, async (_req, res) => {
+  if (!AI_API_KEY) return res.status(503).json({ message: 'کلید هوش مصنوعی در سرور تنظیم نشده است. AI_API_KEY را در متغیرهای محیطی اضافه کن.' });
+
+  const trades = readTrades();
+  const emotionSignals = [
+    { label: 'ترس', pattern: /ترس|می‌ترسیدم|ترسیدم|fear/gi },
+    { label: 'طمع', pattern: /طمع|حریص|greed/gi },
+    { label: 'فومو', pattern: /فومو|fomo|جا\s*ماندن|جاماندن/gi },
+    { label: 'بی‌صبری', pattern: /بی‌صبری|بی صبری|عجله|شتاب‌زده|impatien/gi },
+  ];
+  const emotionText = trades.map((trade) => [
+    trade.emotion, trade.mistakes, trade.notes, trade.entryReason, trade.exitReason, trade.lesson,
+  ].filter(Boolean).join(' '));
+  const detectedSignals = emotionSignals.map(({ label, pattern }) => {
+    const matchedIndexes = emotionText.reduce((matches, text, index) => {
+      pattern.lastIndex = 0;
+      if (pattern.test(text)) matches.push(index);
+      return matches;
+    }, []);
+    const closedPnl = matchedIndexes.reduce((sum, index) => {
+      const trade = trades[index];
+      return trade.status === 'closed' ? sum + tradePnl(trade) : sum;
+    }, 0);
+    return { label, tradeMentions: matchedIndexes.length, associatedClosedPnl: Number(closedPnl.toFixed(2)) };
+  });
+
+  const safeTrades = trades.map(({ images, ...trade }) => ({
+    ...trade,
+    imageCount: Array.isArray(images) ? images.length : 0,
+  }));
+  const content = [{
+    type: 'text',
+    text: [
+      `تعداد معاملات: ${trades.length}.`,
+      `تعداد معاملات بسته: ${trades.filter((trade) => trade.status === 'closed').length}.`,
+      `کمتر از ۳۰ معامله: ${trades.length < 30 ? 'بله؛ داده برای نتیجه‌گیری آماری قطعی کافی نیست.' : 'خیر؛ همچنان از ادعای علیت پرهیز کن.'}`,
+      `شمارش واژه‌های احساسی و PnL همراه آن‌ها (همبستگی واژگانی است، نه اثبات علت): ${JSON.stringify(detectedSignals)}.`,
+      `معاملات کامل برای تحلیل: ${JSON.stringify(safeTrades)}`,
+    ].join('\n'),
+  }];
+  const maxImages = 24;
+  const maxImageBytes = 4 * 1024 * 1024;
+  const maxTotalImageBytes = 12 * 1024 * 1024;
+  let includedImages = 0;
+  let includedImageBytes = 0;
+  let omittedImages = 0;
+
+  for (const trade of trades) {
+    if (!Array.isArray(trade.images)) continue;
+    for (let imageIndex = 0; imageIndex < trade.images.length; imageIndex += 1) {
+      const image = String(trade.images[imageIndex] || '');
+      const isDataImage = /^data:image\/(?:jpeg|png|webp);base64,/i.test(image);
+      let isHttpImage = false;
+      try {
+        const parsed = new URL(image);
+        isHttpImage = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      } catch (_error) {
+        isHttpImage = false;
+      }
+      const estimatedBytes = isDataImage ? Math.ceil(image.slice(image.indexOf(',') + 1).length * 0.75) : 0;
+      if (!isDataImage && !isHttpImage
+        || includedImages >= maxImages
+        || estimatedBytes > maxImageBytes
+        || includedImageBytes + estimatedBytes > maxTotalImageBytes) {
+        omittedImages += 1;
+        continue;
+      }
+      content.push({ type: 'text', text: `تصویر چارت معاملهٔ ${trade.token || trade.id}، شمارهٔ ${imageIndex + 1}:` });
+      content.push({ type: 'image_url', image_url: { url: image, detail: 'low' } });
+      includedImages += 1;
+      includedImageBytes += estimatedBytes;
+    }
+  }
+  if (omittedImages) content[0].text += `\nتصاویر چارت ضمیمه‌شده: ${includedImages} از ${trades.reduce((sum, trade) => sum + (Array.isArray(trade.images) ? trade.images.length : 0), 0)}؛ ${omittedImages} تصویر به علت محدودیت حجم/تعداد ضمیمه نشد.`;
+
+  const systemPrompt = [
+    'تو مربی خودآگاهی و روان‌شناسی ترید هستی؛ فارسی روان، همدل اما رک صحبت کن و بهونه‌ها را محترمانه به چالش بکش.',
+    'هدف استقلال کاربر و کاهش تکرار اشتباه‌هاست. این گزارش درمان نیست و نباید سیگنال ورود/خروج یا تشخیص پزشکی بدهد.',
+    'خروجی را با بخش‌های «۳ الگوی اصلی ضرر»، «۳ نقطه قوت»، «تمرکز این هفته»، «الگوهای احساس و هزینهٔ همراه»، «الگوهای ترکیبی» و «تحلیل خروج و چارت» بنویس.',
+    'برای هر ادعا به معامله/فیلد مشخص ارجاع بده؛ تفاوت همبستگی با علت را روشن کن و اگر شواهد نداریم صریح بگو.',
+    'با کمتر از ۳۰ معامله هرگز نتیجهٔ آماری قطعی نده؛ دقیقاً بنویس «داده هنوز کمه» و بیشتر از متن‌های ثبت‌شده الگو بگیر.',
+    'واژه‌های احساسی و PnL کنارشان صرفاً شمارش/هم‌زمانی هستند، نه اثبات اینکه احساس باعث نتیجه شده است.',
+    'تحلیل ترکیبی ساعت، ستاپ، مارکت‌کپ، ریسک و حالت ذهنی را فقط در صورت وجود داده انجام بده.',
+    'برای خروج، فقط از مارکت‌کپ ورود/خروج و مدت قابل محاسبه استفاده کن؛ سود جا مانده را بدون دادهٔ بعد از خروج یا شواهد تصویری معتبر حدس نزن.',
+    'تصاویر ضمیمه‌شده ممکن است چارت معامله باشند؛ فقط نشانه‌های قابل مشاهده را بگو و اطلاعات ناخوانا را حدس نزن.',
+    'اگر نشانهٔ فشار روانی شدید، ناامیدی، ترید قمارگونه یا درگیری معیشت دیدی، مهربانانه و صریح پیشنهاد گفت‌وگو با متخصص انسانی بده.',
+  ].join(' ');
+
+  try {
+    const response = await fetch(AI_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_API_KEY}` },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content },
+        ],
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const apiMessage = payload.error?.message || payload.message;
+      return res.status(502).json({ message: apiMessage || 'ساخت گزارش هوشمند ناموفق بود.' });
+    }
+    const report = payload.choices?.[0]?.message?.content;
+    if (!report) return res.status(502).json({ message: 'سرویس هوش مصنوعی گزارش متنی برنگرداند.' });
+    return res.json({
+      report,
+      tradeCount: trades.length,
+      includedImages,
+      omittedImages,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (_error) {
+    return res.status(503).json({ message: 'سرویس هوش مصنوعی در دسترس نیست یا زمان ساخت گزارش تمام شد.' });
+  }
+});
+
 app.post('/api/push/subscribe', requireJournalAccess, (req, res) => {
   if (!webPush) return res.status(503).json({ message: 'اعلان وب هنوز در سرور تنظیم نشده است.' });
   const subscription = req.body;
