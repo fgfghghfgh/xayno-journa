@@ -26,6 +26,7 @@ const syncState = document.getElementById('syncState');
 const pushEnableButton = document.getElementById('pushEnableBtn');
 const pushToast = document.getElementById('pushToast');
 const overviewView = document.getElementById('overviewView');
+const apiSettingsView = document.getElementById('apiSettingsView');
 const calendarWrap = document.querySelector('.calendar-wrap');
 const summaryGridElement = document.getElementById('summaryGrid');
 const masterView = document.getElementById('masterView');
@@ -36,6 +37,8 @@ const masterChatSend = document.getElementById('masterChatSend');
 const masterReportButton = document.getElementById('masterReportBtn');
 const masterReportStatus = document.getElementById('masterReportStatus');
 const masterReportResult = document.getElementById('masterReportResult');
+const chatApiState = document.getElementById('chatApiState');
+const reportApiState = document.getElementById('reportApiState');
 const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
@@ -1222,14 +1225,16 @@ function renderOverview() {
 }
 
 function setJournalView(view) {
-  activeJournalView = view === 'overview' || view === 'master' ? view : 'journal';
+  activeJournalView = ['overview', 'master', 'settings'].includes(view) ? view : 'journal';
   const overview = activeJournalView === 'overview';
   const master = activeJournalView === 'master';
+  const settings = activeJournalView === 'settings';
   if (overviewView) overviewView.hidden = !overview;
   if (masterView) masterView.hidden = !master;
-  if (calendarWrap) calendarWrap.hidden = overview || master;
-  if (summaryGridElement) summaryGridElement.hidden = master;
-  if ((overview || master) && tradeForm) tradeForm.style.display = 'none';
+  if (apiSettingsView) apiSettingsView.hidden = !settings;
+  if (calendarWrap) calendarWrap.hidden = overview || master || settings;
+  if (summaryGridElement) summaryGridElement.hidden = master || settings;
+  if ((overview || master || settings) && tradeForm) tradeForm.style.display = 'none';
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
     button.classList.toggle('active', active);
@@ -1597,6 +1602,43 @@ function renderAll() {
 
 journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
 
+function updateApiSettingState(element, configured, name) {
+  if (!element) return;
+  element.classList.toggle('configured', configured);
+  element.classList.toggle('missing', !configured);
+  element.textContent = configured ? `کلید ${name} روی سرور تنظیم شده است.` : `کلید ${name} روی سرور تنظیم نشده است.`;
+}
+
+function renderApiSettingsConfig(config) {
+  updateApiSettingState(chatApiState, Boolean(config.aiChatConfigured), 'چت');
+  updateApiSettingState(reportApiState, Boolean(config.aiReportConfigured), 'گزارش');
+}
+
+document.querySelectorAll('[data-test-api]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const section = button.dataset.testApi;
+    const stateElement = section === 'chat' ? chatApiState : reportApiState;
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = 'در حال تست...';
+    stateElement.classList.remove('configured', 'missing');
+    stateElement.textContent = 'در حال بررسی اتصال امن از سمت سرور...';
+    try {
+      const response = await apiFetch(`/api/ai/test/${encodeURIComponent(section)}`, { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'تست API ناموفق بود.');
+      stateElement.classList.add('configured');
+      stateElement.textContent = payload.message || 'اتصال موفق است.';
+    } catch (error) {
+      stateElement.classList.add('missing');
+      stateElement.textContent = error.message || 'تست اتصال ناموفق بود.';
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  });
+});
+
 masterReportButton?.addEventListener('click', async () => {
   masterReportButton.disabled = true;
   masterReportButton.textContent = 'در حال تحلیل...';
@@ -1689,6 +1731,7 @@ async function hydrateApp() {
     const configResponse = await fetch('/api/config');
     const config = await configResponse.json();
     state.remoteEnabled = Boolean(config.remoteEnabled);
+    renderApiSettingsConfig(config);
     setupJournalPush(config);
   } catch (error) {
     state.remoteEnabled = false;

@@ -333,6 +333,21 @@
       .master-report-status { color: var(--text-dim); font-size: 11px; }
       .master-report-result { margin-top: 14px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); color: var(--text-muted); font-size: 12px; line-height: 2; white-space: pre-wrap; }
       .master-report-result:empty { display: none; }
+      .api-settings[hidden] { display: none !important; }
+      .api-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      .api-settings-heading { grid-column: 1 / -1; }
+      .api-setting-card { padding: 18px; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(15,23,27,.72); }
+      .api-setting-card h2 { margin: 0 0 8px; font-size: 15px; }
+      .api-setting-card p { color: var(--text-dim); font-size: 12px; line-height: 1.9; }
+      .api-setting-vars { display: grid; gap: 7px; margin: 12px 0; }
+      .api-setting-var { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 11px; }
+      .api-setting-var code { direction: ltr; color: var(--cyan); }
+      .api-setting-state { min-height: 20px; color: var(--text-dim); font-size: 11px; }
+      .api-setting-state.configured { color: var(--green); }
+      .api-setting-state.missing { color: var(--yellow); }
+      .api-setting-test { min-height: 38px; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; background: rgba(255,255,255,.05); color: var(--text); padding: 0 14px; font-weight: 700; cursor: pointer; }
+      .api-setting-test:disabled { opacity: .55; cursor: wait; }
+      .api-settings-note { grid-column: 1 / -1; }
       .master-chat { grid-column: 1 / -1; min-height: 320px; }
       .master-chat-log { min-height: 220px; max-height: 420px; overflow: auto; margin-bottom: 12px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); }
       .master-message { max-width: 78%; margin: 8px 0; padding: 10px 12px; border-radius: 12px; line-height: 1.8; font-size: 12px; white-space: pre-wrap; }
@@ -859,6 +874,8 @@
         .calendar-wrap {
           grid-template-columns: 1fr;
         }
+        .api-settings { grid-template-columns: 1fr; }
+        .api-settings-heading, .api-settings-note { grid-column: auto; }
         .master-view { grid-template-columns: 1fr; }
         .master-chat { grid-column: auto; }
         .master-message { max-width: 92%; }
@@ -873,7 +890,7 @@
           order: 3;
           width: 100%;
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 6px;
         }
         .xh-nav-btn {
@@ -921,6 +938,7 @@
             <button type="button" class="xh-nav-btn active" data-journal-view="journal">ژورنال</button>
             <button type="button" class="xh-nav-btn" data-journal-view="overview">نمای کلی</button>
             <button type="button" class="xh-nav-btn" data-journal-view="master">استاد</button>
+            <button type="button" class="xh-nav-btn" data-journal-view="settings">تنظیمات API</button>
           </nav>
 
           <button id="newTradeBtn" type="button" class="action-btn">+ ثبت معامله</button>
@@ -942,6 +960,39 @@
           <div class="summary-grid" id="summaryGrid"></div>
 
           <section id="overviewView" class="overview-view" hidden></section>
+
+          <section id="apiSettingsView" class="api-settings" hidden>
+            <article class="api-setting-card api-settings-heading">
+              <h2>تنظیمات اتصال هوش مصنوعی</h2>
+              <p>برای حفظ امنیت، کلید را در این صفحه وارد نکن. در Render → سرویس ژورنال → Environment مقدارها را اضافه و ذخیره کن؛ با راه‌اندازی دوبارهٔ سرویس، وضعیت این صفحه به‌روز می‌شود. کلیدها هرگز به مرورگر فرستاده نمی‌شوند.</p>
+            </article>
+            <article class="api-setting-card">
+              <h2>هوش مصنوعی چت</h2>
+              <p>این API فقط برای پاسخ‌های چت استاد استفاده می‌شود.</p>
+              <div class="api-setting-vars">
+                <div class="api-setting-var"><code>AI_CHAT_API_KEY</code><span>کلید</span></div>
+                <div class="api-setting-var"><code>AI_CHAT_API_URL</code><span>نشانی API (اختیاری)</span></div>
+                <div class="api-setting-var"><code>AI_CHAT_MODEL</code><span>مدل (اختیاری)</span></div>
+              </div>
+              <div id="chatApiState" class="api-setting-state" role="status">وضعیت بررسی نشده</div>
+              <button type="button" class="api-setting-test" data-test-api="chat">تست اتصال چت</button>
+            </article>
+            <article class="api-setting-card">
+              <h2>هوش مصنوعی گزارش</h2>
+              <p>این API مستقل برای تحلیل گزارش و تصاویر چارت استفاده می‌شود.</p>
+              <div class="api-setting-vars">
+                <div class="api-setting-var"><code>AI_REPORT_API_KEY</code><span>کلید</span></div>
+                <div class="api-setting-var"><code>AI_REPORT_API_URL</code><span>نشانی API (اختیاری)</span></div>
+                <div class="api-setting-var"><code>AI_REPORT_MODEL</code><span>مدل (اختیاری)</span></div>
+              </div>
+              <div id="reportApiState" class="api-setting-state" role="status">وضعیت بررسی نشده</div>
+              <button type="button" class="api-setting-test" data-test-api="report">تست اتصال گزارش</button>
+            </article>
+            <article class="api-setting-card api-settings-note">
+              <h2>نکته دربارهٔ کلیدهای دیگر سایت</h2>
+              <p>کلیدهای Helius و Birdeye همچنان فقط در Environment سرور تنظیم می‌شوند. DexScreener برای قابلیت فعلی کلید نمی‌خواهد. کلید قدیمی <code>AI_API_KEY</code> تا زمان تنظیم کلیدهای جداگانه، به‌عنوان جایگزین سازگار باقی می‌ماند.</p>
+            </article>
+          </section>
 
           <section id="masterView" class="master-view" hidden>
             <article class="master-card master-report">

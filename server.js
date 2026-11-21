@@ -20,6 +20,12 @@ const WEB_PUSH_SUBJECT = process.env.WEB_PUSH_SUBJECT || 'mailto:notifications@x
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
+const AI_CHAT_API_KEY = process.env.AI_CHAT_API_KEY || AI_API_KEY;
+const AI_CHAT_API_URL = process.env.AI_CHAT_API_URL || AI_API_URL;
+const AI_CHAT_MODEL = process.env.AI_CHAT_MODEL || AI_MODEL;
+const AI_REPORT_API_KEY = process.env.AI_REPORT_API_KEY || AI_API_KEY;
+const AI_REPORT_API_URL = process.env.AI_REPORT_API_URL || AI_API_URL;
+const AI_REPORT_MODEL = process.env.AI_REPORT_MODEL || AI_MODEL;
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
 const journalChartCache = new Map();
@@ -182,7 +188,16 @@ app.use(express.static(PUBLIC_DIR, {
 }));
 
 app.get('/api/config', (_req, res) => {
-  res.json({ remoteEnabled: REMOTE_ENABLED, accessRequired: true, chartEnabled: Boolean(BIRDEYE_API_KEY), aiEnabled: Boolean(AI_API_KEY), pushEnabled: Boolean(webPush), pushPublicKey: webPush ? WEB_PUSH_PUBLIC_KEY : '' });
+  res.json({
+    remoteEnabled: REMOTE_ENABLED,
+    accessRequired: true,
+    chartEnabled: Boolean(BIRDEYE_API_KEY),
+    aiEnabled: Boolean(AI_CHAT_API_KEY || AI_REPORT_API_KEY),
+    aiChatConfigured: Boolean(AI_CHAT_API_KEY),
+    aiReportConfigured: Boolean(AI_REPORT_API_KEY),
+    pushEnabled: Boolean(webPush),
+    pushPublicKey: webPush ? WEB_PUSH_PUBLIC_KEY : '',
+  });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -297,7 +312,7 @@ app.use('/api/trades', requireJournalAccess);
 app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
   const message = String(req.body?.message || '').trim();
   if (!message) return res.status(400).json({ message: 'پیام خالی است.' });
-  if (!AI_API_KEY) return res.status(503).json({ message: 'کلید هوش مصنوعی در سرور تنظیم نشده است. AI_API_KEY را در متغیرهای محیطی اضافه کن.' });
+  if (!AI_CHAT_API_KEY) return res.status(503).json({ message: 'کلید چت تنظیم نشده است. AI_CHAT_API_KEY را در تنظیمات محیطی Render اضافه کن.' });
 
   const trades = readTrades();
   const systemPrompt = [
@@ -310,14 +325,14 @@ app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
   ].join(' ');
 
   try {
-    const response = await fetch(AI_API_URL, {
+    const response = await fetch(AI_CHAT_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${AI_API_KEY}`,
+        Authorization: `Bearer ${AI_CHAT_API_KEY}`,
       },
       body: JSON.stringify({
-        model: AI_MODEL,
+        model: AI_CHAT_MODEL,
         temperature: 0.6,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -340,8 +355,46 @@ app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
   }
 });
 
+app.post('/api/ai/test/:section', requireJournalAccess, async (req, res) => {
+  const section = String(req.params.section || '');
+  const config = section === 'chat'
+    ? { key: AI_CHAT_API_KEY, url: AI_CHAT_API_URL, model: AI_CHAT_MODEL, name: 'چت' }
+    : section === 'report'
+      ? { key: AI_REPORT_API_KEY, url: AI_REPORT_API_URL, model: AI_REPORT_MODEL, name: 'گزارش' }
+      : null;
+  if (!config) return res.status(404).json({ message: 'بخش موردنظر برای تست شناخته نشد.' });
+  if (!config.key) {
+    const variable = section === 'chat' ? 'AI_CHAT_API_KEY' : 'AI_REPORT_API_KEY';
+    return res.status(503).json({ message: `کلید ${config.name} تنظیم نشده است؛ متغیر ${variable} را در Render اضافه کن.` });
+  }
+
+  try {
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.key}` },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0,
+        messages: [{ role: 'user', content: 'پاسخ بده: اتصال موفق است.' }],
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const providerMessage = payload.error?.message || payload.message;
+      return res.status(502).json({ message: providerMessage || `تست اتصال ${config.name} ناموفق بود (${response.status}).` });
+    }
+    if (!payload.choices?.[0]?.message?.content) {
+      return res.status(502).json({ message: `سرویس ${config.name} پاسخ متنی معتبر نداد.` });
+    }
+    return res.json({ ok: true, message: `اتصال API ${config.name} موفق است.` });
+  } catch (_error) {
+    return res.status(503).json({ message: `سرویس API ${config.name} در دسترس نیست یا زمان تست تمام شد.` });
+  }
+});
+
 app.post('/api/ai/report', requireJournalAccess, async (_req, res) => {
-  if (!AI_API_KEY) return res.status(503).json({ message: 'کلید هوش مصنوعی در سرور تنظیم نشده است. AI_API_KEY را در متغیرهای محیطی اضافه کن.' });
+  if (!AI_REPORT_API_KEY) return res.status(503).json({ message: 'کلید گزارش تنظیم نشده است. AI_REPORT_API_KEY را در تنظیمات محیطی Render اضافه کن.' });
 
   const trades = readTrades();
   const emotionSignals = [
@@ -429,11 +482,11 @@ app.post('/api/ai/report', requireJournalAccess, async (_req, res) => {
   ].join(' ');
 
   try {
-    const response = await fetch(AI_API_URL, {
+    const response = await fetch(AI_REPORT_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_API_KEY}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_REPORT_API_KEY}` },
       body: JSON.stringify({
-        model: AI_MODEL,
+        model: AI_REPORT_MODEL,
         temperature: 0.4,
         messages: [
           { role: 'system', content: systemPrompt },
