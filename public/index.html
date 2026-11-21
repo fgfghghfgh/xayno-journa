@@ -350,6 +350,26 @@
       .checkin-history-row strong.yellow { color: var(--yellow); }
       .checkin-history-row strong.red { color: var(--red); }
       .checkin-local-note { margin-top: 10px !important; color: var(--text-dim); font-size: 10px !important; }
+      .coach-session-card { grid-column: 1 / -1; }
+      .coach-session-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+      .coach-session-controls label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
+      .coach-session-controls select { min-height: 40px; border: 1px solid rgba(255,255,255,.1); border-radius: 9px; background: #10191e; color: var(--text); padding: 0 10px; }
+      .coach-session-controls button, .coach-session-send button, .coach-session-finish { min-height: 40px; border: 0; border-radius: 9px; background: var(--green); color: #06110d; padding: 0 14px; font-weight: 800; cursor: pointer; }
+      .coach-session-controls button:disabled, .coach-session-send button:disabled, .coach-session-finish:disabled { opacity: .55; cursor: wait; }
+      .coach-session-status { min-height: 20px; margin-top: 8px !important; color: var(--text-dim); font-size: 11px !important; }
+      .coach-session-transcript { display: grid; gap: 8px; max-height: 420px; overflow: auto; margin: 12px 0; padding: 12px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(3,8,12,.38); }
+      .coach-session-entry { max-width: 90%; padding: 9px 11px; border-radius: 10px; color: var(--text-muted); font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .coach-session-entry.assistant { justify-self: start; background: rgba(0,245,160,.08); }
+      .coach-session-entry.user { justify-self: end; background: rgba(0,212,245,.09); }
+      .coach-session-send { display: flex; gap: 8px; }
+      .coach-session-send textarea { flex: 1; min-height: 46px; resize: vertical; border: 1px solid rgba(255,255,255,.10); border-radius: 9px; background: rgba(255,255,255,.04); color: var(--text); padding: 10px; }
+      .coach-session-finish { margin-top: 10px; background: var(--cyan); }
+      .coach-session-history { display: grid; gap: 10px; margin-top: 14px; }
+      .coach-session-history-item { padding: 12px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(3,8,12,.25); }
+      .coach-session-history-item h3 { margin: 0 0 6px; font-size: 12px; }
+      .coach-session-history-item p { margin: 5px 0; overflow-wrap: anywhere; }
+      .coach-session-history-item button { min-height: 34px; margin-top: 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: transparent; color: var(--text); padding: 0 10px; cursor: pointer; }
+      .coach-session-storage-note { margin-top: 12px !important; font-size: 10px !important; color: var(--text-dim); }
       .api-settings[hidden] { display: none !important; }
       .api-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
       .api-settings-heading { grid-column: 1 / -1; }
@@ -1063,9 +1083,27 @@
               </div>
               <div id="masterReportResult" class="master-report-result" aria-live="polite"></div>
             </article>
-            <article class="master-card">
-              <h2>جلسه</h2>
-              <p>جلسه خصوصی، حافظه و تمرین‌های هفتگی در قدم‌های بعدی اضافه می‌شود.</p>
+            <article class="master-card coach-session-card">
+              <h2>جلسه با استاد</h2>
+              <p>جلسه را با مرور سؤال‌های مشخص شروع کن؛ در پایان، خلاصه و تمرین ذخیره می‌شوند تا جلسهٔ بعد پیگیری شوند.</p>
+              <div class="coach-session-controls">
+                <label>سبک مربی
+                  <select id="coachStyle">
+                    <option value="supportive">آرام و حمایتی</option>
+                    <option value="direct">رک و سخت‌گیر</option>
+                  </select>
+                </label>
+                <button id="coachSessionStart" type="button">شروع جلسهٔ این هفته</button>
+              </div>
+              <p id="coachSessionStatus" class="coach-session-status" role="status" aria-live="polite"></p>
+              <div id="coachSessionTranscript" class="coach-session-transcript" aria-live="polite" hidden></div>
+              <form id="coachSessionReplyForm" class="coach-session-send" hidden>
+                <textarea id="coachSessionReply" placeholder="پاسخت را بنویس..."></textarea>
+                <button id="coachSessionSend" type="submit">ارسال</button>
+              </form>
+              <button id="coachSessionFinish" class="coach-session-finish" type="button" hidden>پایان جلسه و ذخیرهٔ جمع‌بندی</button>
+              <div id="coachSessionHistory" class="coach-session-history"></div>
+              <p class="coach-session-storage-note">جلسه‌ها و جمع‌بندی‌ها روی فضای ابری مشترک وب و دسکتاپ نگهداری می‌شوند و از این صفحه قابل حذف نیستند. این ژورنال برای همهٔ دارندگان کلید دسترسی مشترک قابل مشاهده است؛ حرف‌های شخصی یا رمزها را در آن ننویس.</p>
             </article>
             <article class="master-card">
               <h2>چت</h2>

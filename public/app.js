@@ -39,6 +39,14 @@ const masterChatSend = document.getElementById('masterChatSend');
 const masterReportButton = document.getElementById('masterReportBtn');
 const masterReportStatus = document.getElementById('masterReportStatus');
 const masterReportResult = document.getElementById('masterReportResult');
+const coachSessionStartButton = document.getElementById('coachSessionStart');
+const coachSessionStatus = document.getElementById('coachSessionStatus');
+const coachSessionTranscript = document.getElementById('coachSessionTranscript');
+const coachSessionReplyForm = document.getElementById('coachSessionReplyForm');
+const coachSessionReplyInput = document.getElementById('coachSessionReply');
+const coachSessionSendButton = document.getElementById('coachSessionSend');
+const coachSessionFinishButton = document.getElementById('coachSessionFinish');
+const coachSessionHistory = document.getElementById('coachSessionHistory');
 const dailyCheckinForm = document.getElementById('dailyCheckinForm');
 const checkinFeedback = document.getElementById('checkinFeedback');
 const checkinHistory = document.getElementById('checkinHistory');
@@ -50,6 +58,10 @@ let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
 let pushToastTimer = null;
 let activeJournalView = 'journal';
+let coachingSessions = [];
+let activeCoachingSession = null;
+let activeCoachingQuestion = 0;
+let coachSessionBusy = false;
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
 let journalChartOverlayState = new Map();
@@ -1752,6 +1764,249 @@ function renderCheckinHistory() {
     : '<div class="overview-empty">هنوز چک‌این روزانه‌ای ثبت نشده است.</div>';
 }
 
+function coachSessionDate(value) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString('fa-IR') : 'تاریخ نامشخص';
+}
+
+function renderCoachSessionTranscript() {
+  if (!activeCoachingSession) {
+    coachSessionTranscript.hidden = true;
+    coachSessionTranscript.replaceChildren();
+    coachSessionReplyForm.hidden = true;
+    coachSessionFinishButton.hidden = true;
+    coachSessionStartButton.disabled = false;
+    return;
+  }
+  coachSessionTranscript.hidden = false;
+  coachSessionTranscript.replaceChildren(...activeCoachingSession.messages.map((entry) => {
+    const message = document.createElement('div');
+    message.className = `coach-session-entry ${entry.role === 'assistant' ? 'assistant' : 'user'}`;
+    message.textContent = entry.content;
+    return message;
+  }));
+  coachSessionTranscript.scrollTop = coachSessionTranscript.scrollHeight;
+  coachSessionReplyForm.hidden = activeCoachingSession.status !== 'active';
+  coachSessionFinishButton.hidden = activeCoachingSession.status !== 'active' || activeCoachingSession.answers.length < 5;
+  coachSessionStartButton.disabled = activeCoachingSession.status === 'active';
+}
+
+function renderCoachSessionHistory() {
+  if (!coachSessionHistory) return;
+  coachSessionHistory.replaceChildren();
+  if (!coachingSessions.length) {
+    const empty = document.createElement('p');
+    empty.className = 'overview-empty';
+    empty.textContent = 'هنوز جلسه‌ای ذخیره نشده است.';
+    coachSessionHistory.appendChild(empty);
+    return;
+  }
+  coachingSessions.forEach((session) => {
+    const card = document.createElement('article');
+    card.className = 'coach-session-history-item';
+    const title = document.createElement('h3');
+    title.textContent = `${coachSessionDate(session.createdAt)} · ${session.status === 'completed' ? 'پایان‌یافته' : 'در جریان'} · ${session.style === 'direct' ? 'رک و سخت‌گیر' : 'آرام و حمایتی'}`;
+    card.appendChild(title);
+    if (session.summary) {
+      const summary = document.createElement('p');
+      summary.textContent = `خلاصه: ${session.summary}`;
+      card.appendChild(summary);
+    }
+    if (session.insight) {
+      const insight = document.createElement('p');
+      insight.textContent = `بینش: ${session.insight}`;
+      card.appendChild(insight);
+    }
+    if (session.homework) {
+      const homework = document.createElement('p');
+      homework.textContent = `تمرین: ${session.homework}`;
+      card.appendChild(homework);
+    }
+    if (Array.isArray(session.commitments) && session.commitments.length) {
+      const commitments = document.createElement('p');
+      commitments.textContent = `قول‌ها: ${session.commitments.join(' · ')}`;
+      card.appendChild(commitments);
+    }
+    if (session.followUp) {
+      const followUp = document.createElement('p');
+      followUp.textContent = `پیگیری جلسهٔ بعد: ${session.followUp}`;
+      card.appendChild(followUp);
+    }
+    if (session.status === 'active') {
+      const resume = document.createElement('button');
+      resume.type = 'button';
+      resume.textContent = 'ادامهٔ جلسه';
+      resume.addEventListener('click', () => {
+        activeCoachingSession = { ...session };
+        activeCoachingQuestion = Math.min(session.answers.length, 5);
+        document.getElementById('coachStyle').value = session.style;
+        coachSessionStatus.textContent = 'جلسهٔ ذخیره‌شده بارگذاری شد.';
+        renderCoachSessionTranscript();
+        coachSessionTranscript.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      card.appendChild(resume);
+    }
+    coachSessionHistory.appendChild(card);
+  });
+}
+
+async function loadCoachSessions() {
+  const response = await apiFetch('/api/coach/sessions');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'خواندن جلسه‌های ذخیره‌شده ناموفق بود.');
+  if (!Array.isArray(payload.sessions)) throw new Error('فهرست جلسه‌های سرور معتبر نیست.');
+  coachingSessions = payload.sessions;
+  renderCoachSessionHistory();
+}
+
+async function saveCoachSession(session) {
+  const response = await apiFetch('/api/coach/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(session),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'ذخیرهٔ جلسه در فضای ابری ناموفق بود.');
+  const saved = payload.session;
+  coachingSessions = [saved, ...coachingSessions.filter((item) => item.id !== saved.id)]
+    .sort((left, right) => String(right.updatedAt || right.createdAt).localeCompare(String(left.updatedAt || left.createdAt)));
+  activeCoachingSession = saved.status === 'active' ? saved : null;
+  renderCoachSessionHistory();
+  renderCoachSessionTranscript();
+  return saved;
+}
+
+async function startCoachSession() {
+  if (coachSessionBusy) return;
+  coachSessionBusy = true;
+  coachSessionStartButton.disabled = true;
+  coachSessionStatus.textContent = 'در حال آماده‌کردن پنج سؤال از ژورنال و جلسهٔ قبل...';
+  try {
+    const style = document.getElementById('coachStyle').value;
+    const response = await apiFetch('/api/coach/session/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ style }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'شروع جلسه ناموفق بود.');
+    const id = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `session_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+    const firstQuestion = payload.questions[0];
+    activeCoachingQuestion = 0;
+    const session = {
+      id,
+      createdAt: new Date().toISOString(),
+      status: 'active',
+      style,
+      questions: payload.questions,
+      answers: [],
+      messages: [
+        { role: 'assistant', content: payload.greeting },
+        { role: 'assistant', content: `سؤال ۱ از ۵: ${firstQuestion}` },
+      ],
+      summary: '',
+      insight: '',
+      commitments: [],
+      homework: '',
+      followUp: '',
+    };
+    await saveCoachSession(session);
+    coachSessionStatus.textContent = 'جلسه شروع و روی فضای ابری ذخیره شد؛ پاسخ‌ها بعد از هر مرحله ذخیره می‌شوند.';
+    renderCoachSessionTranscript();
+  } catch (error) {
+    coachSessionStatus.textContent = error.message || 'جلسه شروع نشد.';
+    coachSessionStartButton.disabled = false;
+  } finally {
+    coachSessionBusy = false;
+  }
+}
+
+async function handleCoachSessionReply(event) {
+  event.preventDefault();
+  if (coachSessionBusy || !activeCoachingSession || activeCoachingSession.status !== 'active') return;
+  const answer = coachSessionReplyInput.value.trim();
+  if (!answer) return;
+  coachSessionBusy = true;
+  coachSessionSendButton.disabled = true;
+  coachSessionStatus.textContent = 'در حال ذخیرهٔ پاسخ...';
+  try {
+    activeCoachingSession.messages.push({ role: 'user', content: answer });
+    coachSessionReplyInput.value = '';
+    if (activeCoachingQuestion < 5) {
+      activeCoachingSession.answers.push(answer);
+      activeCoachingQuestion += 1;
+    }
+    if (activeCoachingQuestion < 5) {
+      activeCoachingSession.messages.push({
+        role: 'assistant',
+        content: `سؤال ${activeCoachingQuestion + 1} از ۵: ${activeCoachingSession.questions[activeCoachingQuestion]}`,
+      });
+      await saveCoachSession(activeCoachingSession);
+      coachSessionStatus.textContent = `پاسخ ${activeCoachingQuestion} از ۵ در فضای ابری ذخیره شد.`;
+      return;
+    }
+
+    await saveCoachSession(activeCoachingSession);
+    if (activeCoachingSession.messages.filter((message) => message.role === 'user').length === 5) {
+      coachSessionStatus.textContent = 'پنج پاسخ ذخیره شد؛ مربی در حال مرور ژورنال است...';
+    } else {
+      coachSessionStatus.textContent = 'در حال پاسخ‌گویی مربی بر اساس ژورنال...';
+    }
+    const response = await apiFetch('/api/coach/session/reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        style: activeCoachingSession.style,
+        messages: activeCoachingSession.messages,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'پاسخ مربی دریافت نشد.');
+    activeCoachingSession.messages.push({ role: 'assistant', content: payload.reply });
+    await saveCoachSession(activeCoachingSession);
+    coachSessionStatus.textContent = 'پاسخ و حافظهٔ جلسه در فضای ابری ذخیره شد.';
+  } catch (error) {
+    coachSessionStatus.textContent = `${error.message || 'ادامهٔ جلسه ناموفق بود.'} پاسخ‌های ثبت‌شده در این صفحه باقی‌اند؛ اتصال را بررسی و دوباره ارسال کن.`;
+  } finally {
+    coachSessionBusy = false;
+    coachSessionSendButton.disabled = false;
+    renderCoachSessionTranscript();
+    coachSessionReplyInput.focus();
+  }
+}
+
+async function finishCoachSession() {
+  if (coachSessionBusy || !activeCoachingSession || activeCoachingSession.answers.length < 5) return;
+  coachSessionBusy = true;
+  coachSessionFinishButton.disabled = true;
+  coachSessionStatus.textContent = 'در حال ساخت خلاصه، تمرین و پیگیری جلسهٔ بعد...';
+  try {
+    const response = await apiFetch('/api/coach/session/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: activeCoachingSession.messages }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'جمع‌بندی جلسه ناموفق بود.');
+    Object.assign(activeCoachingSession, payload, { status: 'completed' });
+    await saveCoachSession(activeCoachingSession);
+    coachSessionStatus.textContent = 'جلسه همراه با خلاصه، قول‌ها و تمرین روی فضای ابری ذخیره شد.';
+  } catch (error) {
+    coachSessionStatus.textContent = error.message || 'ذخیرهٔ جمع‌بندی جلسه ناموفق بود.';
+    coachSessionFinishButton.disabled = false;
+  } finally {
+    coachSessionBusy = false;
+    renderCoachSessionHistory();
+    renderCoachSessionTranscript();
+  }
+}
+
+coachSessionStartButton?.addEventListener('click', startCoachSession);
+coachSessionReplyForm?.addEventListener('submit', handleCoachSessionReply);
+coachSessionFinishButton?.addEventListener('click', finishCoachSession);
+
 dailyCheckinForm?.addEventListener('submit', (event) => {
   event.preventDefault();
   const record = {
@@ -1892,6 +2147,14 @@ async function hydrateApp() {
   state.selectedDate = localDateKey(new Date());
   resetForm();
   renderAll();
+  try {
+    await loadCoachSessions();
+    coachSessionStatus.textContent = coachingSessions.length
+      ? `${coachingSessions.length} جلسه از فضای ذخیره‌سازی مشترک بارگذاری شد.`
+      : 'جلسه‌ها هنوز در فضای ذخیره‌سازی مشترک ثبت نشده‌اند.';
+  } catch (error) {
+    coachSessionStatus.textContent = `${error.message} برای ذخیرهٔ دائمی، جدول Supabase را مطابق فایل SQL پروژه بساز.`;
+  }
   syncLocalTradesToServer(pendingLocalTrades);
   window.setInterval(() => {
     if (!document.hidden) syncLocalTradesToServer();

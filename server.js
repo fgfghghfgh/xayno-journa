@@ -9,6 +9,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
 const DATA_FILE = path.join(ROOT, 'data', 'trades.json');
+const COACHING_SESSIONS_FILE = path.join(ROOT, 'data', 'coaching-sessions.json');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -77,6 +78,63 @@ async function writeRemoteRecords(records) {
     body: JSON.stringify(records),
   });
   if (!response.ok) throw new Error(`Cloud journal write failed (${response.status}).`);
+}
+
+async function readCoachingSessions() {
+  if (!REMOTE_ENABLED) {
+    if (process.env.RENDER) throw new Error('Remote journal storage is not configured.');
+    if (!fs.existsSync(COACHING_SESSIONS_FILE)) return [];
+    const parsed = JSON.parse(fs.readFileSync(COACHING_SESSIONS_FILE, 'utf8'));
+    if (!Array.isArray(parsed)) throw new Error('Stored coaching sessions are invalid.');
+    return parsed;
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/journal_coaching_sessions?select=id,created_at,updated_at,payload&order=updated_at.desc&limit=1000`, {
+    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Coaching session read failed (${response.status}).`);
+  const records = await response.json();
+  return records.map((record) => ({ ...record.payload, id: record.id, createdAt: record.created_at, updatedAt: record.updated_at }));
+}
+
+async function saveCoachingSession(session) {
+  const createdAt = session.createdAt || new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+  const saved = { ...session, createdAt, updatedAt };
+  if (!REMOTE_ENABLED) {
+    if (process.env.RENDER) throw new Error('Remote journal storage is not configured.');
+    const sessions = await readCoachingSessions();
+    const existing = sessions.find((item) => item.id === saved.id);
+    const merged = existing
+      ? sessions.map((item) => item.id === saved.id ? { ...existing, ...saved, createdAt: existing.createdAt || createdAt } : item)
+      : [saved, ...sessions];
+    const dir = path.dirname(COACHING_SESSIONS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const temporaryFile = `${COACHING_SESSIONS_FILE}.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(merged, null, 2));
+    fs.renameSync(temporaryFile, COACHING_SESSIONS_FILE);
+    return merged.find((item) => item.id === saved.id);
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/journal_coaching_sessions?on_conflict=id`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify({
+      id: saved.id,
+      created_at: createdAt,
+      updated_at: updatedAt,
+      payload: saved,
+    }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Coaching session write failed (${response.status}).`);
+  return saved;
 }
 
 function mergeJournalSync(remoteRecords, incomingTrades, incomingDeletions) {
@@ -511,6 +569,255 @@ app.post('/api/ai/report', requireJournalAccess, async (_req, res) => {
     });
   } catch (_error) {
     return res.status(503).json({ message: 'سرویس هوش مصنوعی در دسترس نیست یا زمان ساخت گزارش تمام شد.' });
+  }
+});
+
+function parseCoachJson(content) {
+  const text = String(content || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new Error('Coach returned invalid JSON.');
+    return JSON.parse(text.slice(start, end + 1));
+  }
+}
+
+async function requestCoachJson(messages) {
+  if (!AI_CHAT_API_KEY) throw new Error('AI_CHAT_API_KEY is not configured.');
+  const response = await fetch(AI_CHAT_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_CHAT_API_KEY}` },
+    body: JSON.stringify({
+      model: AI_CHAT_MODEL,
+      temperature: 0.4,
+      response_format: { type: 'json_object' },
+      messages,
+    }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error?.message || `AI provider request failed (${response.status}).`);
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error('AI provider returned an empty response.');
+  return parseCoachJson(content);
+}
+
+function getCoachStyle(style) {
+  return style === 'direct' ? 'رک و سخت‌گیر، اما محترمانه و بدون تحقیر' : 'آرام و حمایتی، اما صادق و نه صرفاً تأییدکننده';
+}
+
+function getCoachJournalContext(trades, sessions) {
+  const weekStart = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const recentTrades = [...trades]
+    .sort((left, right) => String(right.journalDate || right.openedAt || '').localeCompare(String(left.journalDate || left.openedAt || '')))
+    .slice(0, 100);
+  const currentWeekTrades = recentTrades.filter((trade) => {
+    const date = new Date(trade.openedAt || trade.journalDate || trade.createdAt || 0);
+    return Number.isFinite(date.getTime()) && date.getTime() >= weekStart;
+  });
+  const recentSessions = sessions.slice(0, 5).map((session) => ({
+    date: session.createdAt,
+    summary: session.summary,
+    commitments: session.commitments,
+    homework: session.homework,
+    status: session.status,
+  }));
+  return JSON.stringify({
+    currentWeekTrades,
+    currentWeekTradeCount: currentWeekTrades.length,
+    recentTrades,
+    previousSessions: recentSessions,
+  }).slice(0, 120_000);
+}
+
+app.get('/api/coach/sessions', requireJournalAccess, async (_req, res) => {
+  try {
+    const sessions = await readCoachingSessions();
+    return res.json({ sessions });
+  } catch (error) {
+    console.error('Coaching session read failed:', error.message);
+    return res.status(503).json({
+      message: REMOTE_ENABLED
+        ? 'خواندن جلسه‌ها از فضای ابری انجام نشد؛ جدول journal_coaching_sessions را در Supabase بساز و دسترسی سرور را بررسی کن.'
+        : 'خواندن جلسه‌های ذخیره‌شده انجام نشد.',
+    });
+  }
+});
+
+app.post('/api/coach/sessions', requireJournalAccess, async (req, res) => {
+  const session = req.body;
+  if (!session || typeof session !== 'object' || Array.isArray(session)
+    || !/^[A-Za-z0-9_-]{8,100}$/.test(String(session.id || ''))
+    || !['active', 'completed'].includes(session.status)
+    || !['direct', 'supportive'].includes(session.style)
+    || !Array.isArray(session.questions) || session.questions.length !== 5
+    || !Array.isArray(session.messages) || session.messages.length > 60) {
+    return res.status(400).json({ message: 'ساختار جلسه معتبر نیست.' });
+  }
+
+  const safeSession = {
+    id: String(session.id),
+    createdAt: typeof session.createdAt === 'string' ? session.createdAt : new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: session.status,
+    style: session.style,
+    questions: session.questions.slice(0, 5).map((question) => String(question).slice(0, 1200)),
+    answers: Array.isArray(session.answers) ? session.answers.slice(0, 5).map((answer) => String(answer).slice(0, 4000)) : [],
+    messages: session.messages.slice(-60).map((message) => ({
+      role: message?.role === 'assistant' ? 'assistant' : 'user',
+      content: String(message?.content || '').slice(0, 4000),
+    })),
+    summary: String(session.summary || '').slice(0, 6000),
+    insight: String(session.insight || '').slice(0, 3000),
+    commitments: Array.isArray(session.commitments) ? session.commitments.slice(0, 10).map((item) => String(item).slice(0, 1000)) : [],
+    homework: String(session.homework || '').slice(0, 3000),
+    followUp: String(session.followUp || '').slice(0, 3000),
+  };
+  try {
+    const saved = await saveCoachingSession(safeSession);
+    return res.json({ session: saved });
+  } catch (error) {
+    console.error('Coaching session save failed:', error.message);
+    return res.status(503).json({
+      message: REMOTE_ENABLED
+        ? 'ذخیرهٔ جلسه در فضای ابری انجام نشد؛ مطمئن شو جدول journal_coaching_sessions در Supabase ساخته شده است.'
+        : 'ذخیرهٔ جلسه روی این سرور انجام نشد.',
+    });
+  }
+});
+
+app.post('/api/coach/session/start', requireJournalAccess, async (req, res) => {
+  if (!AI_CHAT_API_KEY) return res.status(503).json({ message: 'برای شروع جلسه، AI_CHAT_API_KEY را در تنظیمات محیطی Render اضافه کن.' });
+  const style = req.body?.style === 'direct' ? 'direct' : 'supportive';
+  let sessions;
+  try {
+    sessions = await readCoachingSessions();
+  } catch (error) {
+    console.error('Coaching session context read failed:', error.message);
+    return res.status(503).json({ message: 'حافظهٔ جلسه‌های قبلی در دسترس نیست؛ اتصال Supabase و جدول journal_coaching_sessions را بررسی کن.' });
+  }
+  const context = getCoachJournalContext(readTrades(), sessions);
+  try {
+    const result = await requestCoachJson([
+      {
+        role: 'system',
+        content: [
+          `تو مربی خودآگاهی ترید هستی؛ سبک تو: ${getCoachStyle(style)}.`,
+          'جلسهٔ تازه را با یک خوش‌آمد کوتاه آغاز کن و دقیقاً پنج سؤال ساختاریافته برای شروع بساز.',
+          'سؤال‌ها مشخصاً از معاملات ۷ روز اخیر و قول/تکلیف جلسهٔ قبل استفاده کنند؛ اگر دادهٔ هفته یا جلسهٔ قبل کم است، این را بگو و سؤال‌های باز و غیرحدسی بساز.',
+          'با کمتر از ۳۰ معامله هیچ نتیجهٔ آماری قطعی نده و عبارت «داده هنوز کمه» را به کار ببر.',
+          'این مربی درمان‌گر نیست و سیگنال خریدوفروش نمی‌دهد.',
+          'پاسخ را فقط JSON معتبر با کلیدهای greeting و questions برگردان؛ questions آرایه‌ای با دقیقاً ۵ رشتهٔ فارسی باشد.',
+        ].join(' '),
+      },
+      { role: 'user', content: `داده‌های ژورنال و حافظهٔ قبلی:\n${context}` },
+    ]);
+    if (typeof result.greeting !== 'string' || !Array.isArray(result.questions) || result.questions.length !== 5
+      || result.questions.some((question) => typeof question !== 'string' || !question.trim())) {
+      return res.status(502).json({ message: 'مربی نتوانست پنج سؤال جلسه را با قالب معتبر بسازد؛ دوباره تلاش کن.' });
+    }
+    return res.json({ greeting: result.greeting, questions: result.questions, style });
+  } catch (error) {
+    console.error('Coaching session start failed:', error.message);
+    return res.status(502).json({ message: 'ساخت سؤال‌های جلسه با هوش مصنوعی ناموفق بود؛ تنظیمات API چت را تست کن.' });
+  }
+});
+
+app.post('/api/coach/session/reply', requireJournalAccess, async (req, res) => {
+  if (!AI_CHAT_API_KEY) return res.status(503).json({ message: 'برای جلسه، AI_CHAT_API_KEY را در تنظیمات محیطی Render اضافه کن.' });
+  const style = req.body?.style === 'direct' ? 'direct' : 'supportive';
+  const messages = Array.isArray(req.body?.messages)
+    ? req.body.messages.slice(-24).filter((message) => ['user', 'assistant'].includes(message?.role)
+      && typeof message.content === 'string')
+      .map((message) => ({ role: message.role, content: message.content.slice(0, 4000) }))
+    : [];
+  if (!messages.length || messages[messages.length - 1].role !== 'user') {
+    return res.status(400).json({ message: 'پاسخ کاربر برای ادامهٔ جلسه لازم است.' });
+  }
+
+  let sessions;
+  try {
+    sessions = await readCoachingSessions();
+  } catch (error) {
+    console.error('Coaching session context read failed:', error.message);
+    return res.status(503).json({ message: 'حافظهٔ قبلی جلسه در دسترس نیست؛ اتصال ذخیره‌سازی را بررسی کن.' });
+  }
+  const context = getCoachJournalContext(readTrades(), sessions);
+  try {
+    const response = await fetch(AI_CHAT_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_CHAT_API_KEY}` },
+      body: JSON.stringify({
+        model: AI_CHAT_MODEL,
+        temperature: 0.5,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              `تو مربی خودآگاهی ترید هستی؛ سبک تو: ${getCoachStyle(style)}.`,
+              'پاسخ‌ها را فارسی، همدلانه و صریح بده؛ گفته‌های کاربر را در صورت لزوم با فیلدهای ژورنال مقایسه کن و به تاریخ/نمونهٔ مشخص اشاره کن.',
+              'فقط بر اساس دادهٔ ارائه‌شده حرف بزن؛ اگر کمتر از ۳۰ معامله وجود دارد، آمار قطعی نده و بگو «داده هنوز کمه».',
+              'از توصیهٔ ورود و خروج، تشخیص روان‌شناختی یا تشویق وابستگی پرهیز کن. اگر نشانهٔ بحران، ناامیدی، ترید قمارگونه یا خطر معیشت دیدی، پیشنهاد مهربانانهٔ کمک متخصص انسانی بده.',
+              `حافظهٔ جلسه‌های پیشین و داده‌های ژورنال:\n${context}`,
+            ].join(' '),
+          },
+          ...messages,
+        ],
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) return res.status(502).json({ message: payload.error?.message || 'پاسخ مربی ناموفق بود.' });
+    const reply = payload.choices?.[0]?.message?.content;
+    if (!reply) return res.status(502).json({ message: 'مربی پاسخ متنی برنگرداند.' });
+    return res.json({ reply });
+  } catch (error) {
+    console.error('Coaching session reply failed:', error.message);
+    return res.status(503).json({ message: 'پاسخ مربی در دسترس نیست یا زمان پاسخ تمام شد.' });
+  }
+});
+
+app.post('/api/coach/session/finish', requireJournalAccess, async (req, res) => {
+  if (!AI_CHAT_API_KEY) return res.status(503).json({ message: 'برای جمع‌بندی جلسه، AI_CHAT_API_KEY را در تنظیمات محیطی Render اضافه کن.' });
+  const messages = Array.isArray(req.body?.messages)
+    ? req.body.messages.slice(-40).filter((message) => ['user', 'assistant'].includes(message?.role)
+      && typeof message.content === 'string')
+      .map((message) => ({ role: message.role, content: message.content.slice(0, 4000) }))
+    : [];
+  if (messages.filter((message) => message.role === 'user').length < 5) {
+    return res.status(400).json({ message: 'برای پایان جلسه، ابتدا به پنج سؤال آغازین پاسخ بده.' });
+  }
+  try {
+    const result = await requestCoachJson([
+      {
+        role: 'system',
+        content: [
+          'گفتگوی جلسهٔ مربی خودآگاهی ترید را صادقانه و بدون اغراق جمع‌بندی کن.',
+          'یک خلاصهٔ قابل پیگیری، یک بینش اصلی، حداکثر سه قول مشخص که خود کاربر پذیرفته، یک تمرین کوچک برای هفتهٔ بعد و یک سؤال پیگیری برای جلسهٔ بعد ارائه بده.',
+          'قولی را که کاربر نپذیرفته به او نسبت نده؛ اگر قول مشخصی نداده، commitments را آرایهٔ خالی برگردان.',
+          'این جمع‌بندی درمان یا توصیهٔ مالی نیست.',
+          'فقط JSON معتبر با کلیدهای summary, insight, commitments, homework, followUp برگردان.',
+        ].join(' '),
+      },
+      { role: 'user', content: JSON.stringify(messages) },
+    ]);
+    if (typeof result.summary !== 'string' || typeof result.insight !== 'string'
+      || !Array.isArray(result.commitments) || typeof result.homework !== 'string'
+      || typeof result.followUp !== 'string') {
+      return res.status(502).json({ message: 'جمع‌بندی جلسه قالب معتبر نداشت؛ دوباره تلاش کن.' });
+    }
+    return res.json({
+      summary: result.summary,
+      insight: result.insight,
+      commitments: result.commitments.slice(0, 3).map((item) => String(item)),
+      homework: result.homework,
+      followUp: result.followUp,
+    });
+  } catch (error) {
+    console.error('Coaching session finish failed:', error.message);
+    return res.status(502).json({ message: 'جمع‌بندی جلسه با هوش مصنوعی ناموفق بود.' });
   }
 });
 
