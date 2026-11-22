@@ -394,6 +394,25 @@
       .master-chat-form textarea { flex: 1; min-height: 48px; resize: vertical; border: 1px solid rgba(255,255,255,.10); border-radius: 10px; background: rgba(255,255,255,.04); color: var(--text); padding: 10px 12px; }
       .master-chat-form button { border: 0; border-radius: 10px; background: var(--green); color: #06110d; padding: 0 18px; font-weight: 800; cursor: pointer; }
       .master-chat-form button:disabled { opacity: .55; cursor: wait; }
+      .pretrade-overlay[hidden] { display: none; }
+      .coach-quick-card { grid-column: 1 / -1; }
+      .coach-quick-actions, .coach-quick-fields, .pretrade-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+      .coach-quick-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+      .coach-quick-fields[hidden], .coach-quick-result[hidden] { display: none; }
+      .coach-quick-fields label, .pretrade-card label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
+      .coach-quick-fields textarea, .pretrade-card textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid rgba(255,255,255,.1); border-radius: 9px; background: rgba(255,255,255,.04); color: var(--text); padding: 10px; line-height: 1.8; }
+      .coach-quick-actions button, .coach-quick-fields button, .pretrade-actions button { min-height: 40px; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; background: rgba(255,255,255,.05); color: var(--text); padding: 0 14px; font-weight: 700; cursor: pointer; }
+      .coach-quick-actions button:first-child, .coach-quick-fields button, .pretrade-actions .pretrade-review { border: 0; background: var(--green); color: #06110d; }
+      .coach-quick-actions button:disabled, .coach-quick-fields button:disabled, .pretrade-actions button:disabled { opacity: .55; cursor: wait; }
+      .coach-quick-status, .coach-quick-result, .pretrade-status { margin-top: 10px; color: var(--text-dim); font-size: 11px; line-height: 1.9; white-space: pre-wrap; }
+      .coach-quick-result:not([hidden]) { padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(3,8,12,.38); color: var(--text-muted); }
+      .pretrade-overlay { position: fixed; inset: 0; z-index: 10020; display: grid; place-items: center; padding: 18px; background: rgba(0,0,0,.78); backdrop-filter: blur(8px); }
+      .pretrade-card { width: min(620px, 100%); max-height: 90vh; overflow: auto; padding: 20px; border: 1px solid rgba(255,255,255,.12); border-radius: 16px; background: #10191e; box-shadow: 0 24px 80px rgba(0,0,0,.55); }
+      .pretrade-card h2 { margin: 0 0 7px; font-size: 17px; }
+      .pretrade-card p { margin: 0; color: var(--text-dim); font-size: 11px; line-height: 1.8; }
+      .pretrade-fields { display: grid; gap: 10px; margin-top: 14px; }
+      .pretrade-actions { justify-content: flex-start; }
+      .pretrade-actions .pretrade-continue { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.04); color: var(--text-muted); }
       .lookup-field { grid-column: 1 / -1; display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
       .lookup-field .field { flex: 1 1 230px; }
       .lookup-button { min-height: 42px; margin-bottom: 1px; border: 0; border-radius: 10px; background: var(--cyan); color: #061014; padding: 0 14px; font-weight: 800; cursor: pointer; }
@@ -1105,6 +1124,30 @@
               <div id="coachSessionHistory" class="coach-session-history"></div>
               <p class="coach-session-storage-note">جلسه‌ها و جمع‌بندی‌ها روی فضای ابری مشترک وب و دسکتاپ نگهداری می‌شوند و از این صفحه قابل حذف نیستند. این ژورنال برای همهٔ دارندگان کلید دسترسی مشترک قابل مشاهده است؛ حرف‌های شخصی یا رمزها را در آن ننویس.</p>
             </article>
+            <article class="master-card coach-quick-card">
+              <h2>اتاق بعد از ضرر</h2>
+              <p>بعد از ضرر سنگین یا دو ضرر پیاپی، پنج دقیقه مکث کن: چه شد، الان چه حسی داری و قبل از تصمیم بعدی چه کمکی لازم داری؟ استاد تصمیم معامله را برایت نمی‌گیرد.</p>
+              <div id="afterLossStreak" class="coach-quick-status"></div>
+              <div class="coach-quick-actions">
+                <button id="openAfterLossRoom" type="button">شروع مکث بعد از ضرر</button>
+                <button id="openPreTradeRoom" type="button">می‌خواهم همین الان وارد شوم</button>
+              </div>
+              <div id="afterLossFields" class="coach-quick-fields" hidden>
+                <label>چه اتفاقی افتاد؟
+                  <textarea id="afterLossEvent" placeholder="کوتاه و بدون قضاوت بنویس"></textarea>
+                </label>
+                <label>الان چه حسی داری؟
+                  <textarea id="afterLossFeeling" placeholder="مثلاً عصبانیت، ترس، آرامش"></textarea>
+                </label>
+                <label>قبل از هر تصمیم بعدی چه کار می‌کنی؟
+                  <textarea id="afterLossNextStep" placeholder="مثلاً چند دقیقه از صفحه فاصله می‌گیرم"></textarea>
+                </label>
+                <button id="sendAfterLossRoom" type="button">مرور این مکث با استاد</button>
+              </div>
+              <div id="afterLossStatus" class="coach-quick-status" role="status" aria-live="polite"></div>
+              <div id="afterLossResult" class="coach-quick-result" aria-live="polite" hidden></div>
+              <p class="coach-quick-status">پیش از ثبت معاملهٔ باز هم همین سه پرسش به‌صورت خودکار نمایش داده می‌شود.</p>
+            </article>
             <article class="master-card">
               <h2>چت</h2>
               <p>برای تست اتصال، یک پیام ساده به مربی هوش مصنوعی بفرست.</p>
@@ -1291,11 +1334,35 @@
               </div>
             </div>
           </form>
+          <section id="preTradeCheck" class="pretrade-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="preTradeTitle">
+            <div class="pretrade-card">
+              <h2 id="preTradeTitle">مکث ۲۰ ثانیه‌ای قبل از ورود</h2>
+              <p>بدون عجله، سه مورد را روشن کن. پاسخ‌ها را با ژورنال مرور می‌کنیم؛ استاد نمی‌گوید وارد معامله بشوی یا نه.</p>
+              <div class="pretrade-fields">
+                <label for="preTradeWhy">۱) چرا می‌خواهی وارد شوی؟
+                  <textarea id="preTradeWhy" placeholder="دلیل و ستاپ مشخصت"></textarea>
+                </label>
+                <label for="preTradeStop">۲) حد ضررت کجاست؟
+                  <textarea id="preTradeStop" placeholder="قیمت یا درصد؛ اگر هنوز مشخص نیست، همین را بنویس"></textarea>
+                </label>
+                <label for="preTradeSimilar">۳) شبیه کدام معاملهٔ قبلی توست؟
+                  <textarea id="preTradeSimilar" placeholder="نمونهٔ مشابه یا «مطمئن نیستم»"></textarea>
+                </label>
+              </div>
+              <div id="preTradeStatus" class="pretrade-status" role="status" aria-live="polite"></div>
+              <div id="preTradeResult" class="coach-quick-result" aria-live="polite" hidden></div>
+              <div class="pretrade-actions">
+                <button id="runPreTradeReview" class="pretrade-review" type="button">بررسی با استاد</button>
+                <button id="continueAfterPreTrade" class="pretrade-continue" type="button">با تصمیم خودم ادامه می‌دهم</button>
+                <button id="cancelPreTrade" type="button">بازگشت به ثبت</button>
+              </div>
+            </div>
+          </section>
         </main>
       </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
-    <script src="/app.js?v=20261121-step1"></script>
+    <script src="/app.js?v=20261122-step7"></script>
   </body>
 </html>

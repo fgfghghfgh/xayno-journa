@@ -47,6 +47,20 @@ const coachSessionReplyInput = document.getElementById('coachSessionReply');
 const coachSessionSendButton = document.getElementById('coachSessionSend');
 const coachSessionFinishButton = document.getElementById('coachSessionFinish');
 const coachSessionHistory = document.getElementById('coachSessionHistory');
+const afterLossFields = document.getElementById('afterLossFields');
+const afterLossStatus = document.getElementById('afterLossStatus');
+const afterLossResult = document.getElementById('afterLossResult');
+const afterLossStreak = document.getElementById('afterLossStreak');
+const preTradeCheck = document.getElementById('preTradeCheck');
+const preTradeWhy = document.getElementById('preTradeWhy');
+const preTradeStop = document.getElementById('preTradeStop');
+const preTradeSimilar = document.getElementById('preTradeSimilar');
+const preTradeStatus = document.getElementById('preTradeStatus');
+const preTradeResult = document.getElementById('preTradeResult');
+let preTradeReviewComplete = false;
+let preTradeFromForm = false;
+let preTradeReviewBusy = false;
+let afterLossReviewBusy = false;
 const dailyCheckinForm = document.getElementById('dailyCheckinForm');
 const checkinFeedback = document.getElementById('checkinFeedback');
 const checkinHistory = document.getElementById('checkinHistory');
@@ -1253,7 +1267,10 @@ function setJournalView(view) {
   if (calendarWrap) calendarWrap.hidden = overview || master || settings;
   if (summaryGridElement) summaryGridElement.hidden = master || settings;
   if ((overview || master || settings) && tradeForm) tradeForm.style.display = 'none';
-  if (master) renderDailyCheckin();
+  if (master) {
+    renderDailyCheckin();
+    renderAfterLossStreak();
+  }
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
     button.classList.toggle('active', active);
@@ -1451,6 +1468,9 @@ function openFormForEdit(id) {
 
 function resetForm() {
   tradeForm.reset();
+  preTradeReviewComplete = false;
+  preTradeFromForm = false;
+  if (preTradeCheck) preTradeCheck.hidden = true;
   document.getElementById('tradeId').value = '';
   document.getElementById('journalDate').value = state.selectedDate;
   state.formImages = [];
@@ -1555,6 +1575,18 @@ async function saveTrade(event) {
     document.getElementById('token').focus();
     return;
   }
+  if (values.status === 'open' && !values.id && !preTradeReviewComplete) {
+    preTradeFromForm = true;
+    document.getElementById('continueAfterPreTrade').textContent = 'با تصمیم خودم ادامه می‌دهم';
+    preTradeWhy.value = values.entryReason;
+    preTradeStop.value = values.stopLoss;
+    preTradeSimilar.value = '';
+    preTradeStatus.textContent = '۲۰ ثانیه مکث: دلیل ورود، حد ضرر و شباهت به معامله‌های قبلی را مرور کن.';
+    preTradeResult.hidden = true;
+    preTradeResult.textContent = '';
+    preTradeCheck.hidden = false;
+    return;
+  }
 
   const submitButton = tradeForm.querySelector('button[type="submit"]');
   const nextTrade = {
@@ -1600,6 +1632,111 @@ async function saveTrade(event) {
   }
 }
 
+function getRecentLossStreak() {
+  const closed = state.trades.filter((trade) => trade.status === 'closed')
+    .slice()
+    .sort((left, right) => String(right.closedAt || right.openedAt || right.journalDate || right.createdAt || '')
+      .localeCompare(String(left.closedAt || left.openedAt || left.journalDate || left.createdAt || '')));
+  let streak = 0;
+  for (const trade of closed) {
+    const hasDollarLoss = trade.pnlDollar !== '' && trade.pnlDollar != null && Number.isFinite(Number(trade.pnlDollar)) && Number(trade.pnlDollar) < 0;
+    const hasPercentLoss = trade.pnlPercent !== '' && trade.pnlPercent != null && Number.isFinite(Number(trade.pnlPercent)) && Number(trade.pnlPercent) < 0;
+    if (!hasDollarLoss && !hasPercentLoss && tradePnl(trade) >= 0) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+function renderAfterLossStreak() {
+  if (!afterLossStreak) return;
+  const streak = getRecentLossStreak();
+  afterLossStreak.textContent = streak >= 2
+    ? `${streak} ضرر پیاپی در معاملات بسته‌شدهٔ ثبت‌شده دیده می‌شود؛ اگر الان فشار حس می‌کنی، قبل از هر تصمیم مکث کن.`
+    : 'اتاق هر زمان خواستی در دسترس است؛ برای «ضرر بزرگ» حدی را حدس نمی‌زنیم.';
+}
+
+async function requestCoachQuickReview(kind, answers) {
+  const response = await apiFetch('/api/coach/quick-review', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, answers }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'مرور با استاد ناموفق بود.');
+  return payload;
+}
+
+async function reviewAfterLoss() {
+  const answers = {
+    whatHappened: document.getElementById('afterLossEvent').value.trim(),
+    feeling: document.getElementById('afterLossFeeling').value.trim(),
+    nextStep: document.getElementById('afterLossNextStep').value.trim(),
+  };
+  if (Object.values(answers).some((answer) => !answer)) {
+    afterLossStatus.textContent = 'برای شروع، هر سه پرسش را کوتاه پاسخ بده.';
+    return;
+  }
+  afterLossReviewBusy = true;
+  document.getElementById('sendAfterLossRoom').disabled = true;
+  afterLossStatus.textContent = 'استاد دارد پاسخ‌ها را با ژورنال مقایسه می‌کند...';
+  afterLossResult.hidden = true;
+  try {
+    const result = await requestCoachQuickReview('after-loss', answers);
+    afterLossResult.textContent = result.reply;
+    afterLossResult.hidden = false;
+    afterLossStatus.textContent = `${result.tradeCount} معاملهٔ اخیر برای زمینه بررسی شد. پاسخ‌ها و این مکث ذخیره نمی‌شوند.`;
+  } catch (error) {
+    afterLossStatus.textContent = error.message || 'پاسخ استاد در دسترس نیست؛ پرسش‌ها را به‌عنوان مکث شخصی مرور کن.';
+  } finally {
+    afterLossReviewBusy = false;
+    document.getElementById('sendAfterLossRoom').disabled = false;
+  }
+}
+
+async function reviewBeforeEntry() {
+  const answers = {
+    why: preTradeWhy.value.trim(),
+    stopLoss: preTradeStop.value.trim(),
+    similar: preTradeSimilar.value.trim(),
+  };
+  if (Object.values(answers).some((answer) => !answer)) {
+    preTradeStatus.textContent = 'هر سه مورد را پاسخ بده؛ اگر چیزی را نمی‌دانی، صریح بنویس «نمی‌دانم».';
+    return;
+  }
+  preTradeReviewBusy = true;
+  document.getElementById('runPreTradeReview').disabled = true;
+  preTradeStatus.textContent = 'استاد دارد پاسخ‌ها را با الگوهای ژورنال می‌سنجد...';
+  preTradeResult.hidden = true;
+  try {
+    const result = await requestCoachQuickReview('pre-entry', answers);
+    preTradeResult.textContent = result.reply;
+    preTradeResult.hidden = false;
+    preTradeStatus.textContent = `${result.tradeCount} معاملهٔ اخیر برای زمینه بررسی شد. تصمیم نهایی با خودت است.`;
+  } catch (error) {
+    preTradeStatus.textContent = `${error.message || 'پاسخ استاد در دسترس نیست.'} می‌توانی پرسش‌ها را خودت مرور کنی یا به ثبت برگردی.`;
+  } finally {
+    preTradeReviewBusy = false;
+    document.getElementById('runPreTradeReview').disabled = false;
+  }
+}
+
+function continueAfterPreTrade() {
+  const answers = [preTradeWhy.value.trim(), preTradeStop.value.trim(), preTradeSimilar.value.trim()];
+  if (answers.some((answer) => !answer)) {
+    preTradeStatus.textContent = 'قبل از ادامه، هر سه مورد را پاسخ بده؛ برای مورد نامشخص بنویس «نمی‌دانم».';
+    return;
+  }
+  if (!preTradeFromForm) {
+    preTradeCheck.hidden = true;
+    return;
+  }
+  document.getElementById('entryReason').value = answers[0];
+  document.getElementById('stopLoss').value = answers[1];
+  preTradeReviewComplete = true;
+  preTradeCheck.hidden = true;
+  tradeForm.requestSubmit();
+}
+
 async function deleteTrade(id) {
   try {
     const response = await apiFetch(`/api/trades/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -1618,6 +1755,7 @@ function renderAll() {
   renderCalendar();
   renderSelectedDay();
   renderCheckinHistory();
+  renderAfterLossStreak();
 }
 
 journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
@@ -2089,6 +2227,32 @@ masterChatForm?.addEventListener('submit', async (event) => {
     masterChatSend.disabled = false;
     masterChatSend.textContent = 'ارسال';
   }
+});
+
+document.getElementById('openAfterLossRoom')?.addEventListener('click', () => {
+  afterLossFields.hidden = false;
+  afterLossResult.hidden = true;
+  afterLossStatus.textContent = 'این سه پاسخ فقط برای همین گفت‌وگو استفاده می‌شوند و ذخیره نمی‌شوند.';
+  document.getElementById('afterLossEvent').focus();
+});
+document.getElementById('openPreTradeRoom')?.addEventListener('click', () => {
+  preTradeFromForm = false;
+  document.getElementById('continueAfterPreTrade').textContent = 'پایان مکث';
+  preTradeWhy.value = '';
+  preTradeStop.value = '';
+  preTradeSimilar.value = '';
+  preTradeStatus.textContent = '۲۰ ثانیه مکث: دلیل ورود، حد ضرر و شباهت به معامله‌های قبلی را مرور کن.';
+  preTradeResult.hidden = true;
+  preTradeResult.textContent = '';
+  preTradeCheck.hidden = false;
+});
+document.getElementById('sendAfterLossRoom')?.addEventListener('click', reviewAfterLoss);
+document.getElementById('runPreTradeReview')?.addEventListener('click', reviewBeforeEntry);
+document.getElementById('continueAfterPreTrade')?.addEventListener('click', continueAfterPreTrade);
+document.getElementById('cancelPreTrade')?.addEventListener('click', () => {
+  preTradeCheck.hidden = true;
+  preTradeFromForm = false;
+  preTradeReviewComplete = false;
 });
 
 document.getElementById('newTradeBtn').addEventListener('click', () => {
