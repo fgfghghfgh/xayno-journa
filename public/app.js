@@ -59,6 +59,8 @@ const apiSettingsView = document.getElementById('apiSettingsView');
 const calendarWrap = document.querySelector('.calendar-wrap');
 const summaryGridElement = document.getElementById('summaryGrid');
 const masterView = document.getElementById('masterView');
+const coachView = document.getElementById('coachView');
+const coachChatWelcome = document.getElementById('coachChatWelcome');
 const masterChatLog = document.getElementById('masterChatLog');
 const masterChatForm = document.getElementById('masterChatForm');
 const masterChatInput = document.getElementById('masterChatInput');
@@ -71,12 +73,25 @@ const monthlyComparisonNote = document.getElementById('monthlyComparisonNote');
 const monthlyComparisonResult = document.getElementById('monthlyComparisonResult');
 const coachSessionStartButton = document.getElementById('coachSessionStart');
 const coachSessionStatus = document.getElementById('coachSessionStatus');
-const coachSessionTranscript = document.getElementById('coachSessionTranscript');
-const coachSessionReplyForm = document.getElementById('coachSessionReplyForm');
-const coachSessionReplyInput = document.getElementById('coachSessionReply');
+const masterChatStatus = document.getElementById('masterChatStatus');
+const coachSessionTranscript = document.getElementById('coachSessionLog');
+const coachSessionReplyForm = document.getElementById('coachSessionForm');
+const coachSessionReplyInput = document.getElementById('coachSessionInput');
 const coachSessionSendButton = document.getElementById('coachSessionSend');
 const coachSessionFinishButton = document.getElementById('coachSessionFinish');
 const coachSessionHistory = document.getElementById('coachSessionHistory');
+const coachConversationList = document.getElementById('coachConversationList');
+const coachConversationSearch = document.getElementById('coachConversationSearch');
+const coachNewConversationButton = document.getElementById('coachNewConversation');
+const coachNewConversationDrawerButton = document.getElementById('coachNewConversationDrawer');
+const coachLoadOlderMessagesButton = document.getElementById('coachLoadOlderMessages');
+const coachChatHistoryToggle = document.getElementById('coachChatHistoryToggle');
+const coachChatDrawer = document.getElementById('coachChatDrawer');
+const coachChatDrawerBackdrop = document.getElementById('coachChatDrawerBackdrop');
+const coachChatActiveTitle = document.getElementById('coachChatActiveTitle');
+const masterChatListStatus = document.getElementById('masterChatListStatus');
+const coachMemoryList = document.getElementById('coachMemoryList');
+const coachMemoryStatus = document.getElementById('coachMemoryStatus');
 const afterLossFields = document.getElementById('afterLossFields');
 const afterLossStatus = document.getElementById('afterLossStatus');
 const afterLossResult = document.getElementById('afterLossResult');
@@ -130,9 +145,17 @@ let deferredLocalTradeCount = 0;
 let centralSyncPromise = null;
 let centralSyncRequested = false;
 let pushToastTimer = null;
-let activeJournalView = 'journal';
+let activeJournalView = 'coach';
 let masterChatHistory = [];
 let coachingSessions = [];
+let coachConversations = [];
+let activeConversation = null;
+let coachConversationLoadSequence = 0;
+let coachConversationSelectionSequence = 0;
+let conversationHasMoreMessages = false;
+let conversationSearchMatches = {};
+let coachMemories = [];
+let activeConversationSyncedCount = 0;
 const invalidCentralLocalStorage = new Set();
 let activeCoachingSession = null;
 let activeCoachingQuestion = 0;
@@ -1571,16 +1594,19 @@ function renderOverview() {
 }
 
 function setJournalView(view) {
-  activeJournalView = ['overview', 'master', 'settings'].includes(view) ? view : 'journal';
+  activeJournalView = ['overview', 'master', 'coach', 'settings'].includes(view) ? view : 'journal';
   const overview = activeJournalView === 'overview';
   const master = activeJournalView === 'master';
+  const coach = activeJournalView === 'coach';
   const settings = activeJournalView === 'settings';
   if (overviewView) overviewView.hidden = !overview;
   if (masterView) masterView.hidden = !master;
+  if (coachView) coachView.hidden = !coach;
   if (apiSettingsView) apiSettingsView.hidden = !settings;
-  if (calendarWrap) calendarWrap.hidden = overview || master || settings;
-  if (summaryGridElement) summaryGridElement.hidden = master || settings;
-  if ((overview || master || settings) && tradeForm) tradeForm.style.display = 'none';
+  if (calendarWrap) calendarWrap.hidden = overview || master || coach || settings;
+  if (summaryGridElement) summaryGridElement.hidden = master || coach || settings;
+  if ((overview || master || coach || settings) && tradeForm) tradeForm.style.display = 'none';
+  document.body.classList.toggle('coach-active-view', coach);
   if (master) {
     renderDailyCheckin();
     renderAfterLossStreak();
@@ -1591,6 +1617,7 @@ function setJournalView(view) {
     button.setAttribute('aria-pressed', String(active));
   });
   if (overview) renderOverview();
+  if (!coach) closeCoachChatDrawer({ restoreFocus: false });
 }
 
 function groupTradesByDay() {
@@ -2826,25 +2853,435 @@ function coachSessionDate(value) {
 }
 
 function renderCoachSessionTranscript() {
-  if (!activeCoachingSession) {
-    coachSessionTranscript.hidden = true;
-    coachSessionTranscript.replaceChildren();
-    coachSessionReplyForm.hidden = true;
-    coachSessionFinishButton.hidden = true;
-    coachSessionStartButton.disabled = false;
-    return;
-  }
-  coachSessionTranscript.hidden = false;
-  coachSessionTranscript.replaceChildren(...activeCoachingSession.messages.map((entry) => {
+  const messages = activeCoachingSession?.messages || [];
+  coachSessionTranscript.hidden = messages.length === 0;
+  coachSessionTranscript.replaceChildren(...messages.map((entry) => {
     const message = document.createElement('div');
-    message.className = `coach-session-entry ${entry.role === 'assistant' ? 'assistant' : 'user'}`;
+    message.className = `master-message ${entry.role === 'assistant' ? 'assistant' : entry.role === 'system' ? 'system' : 'user'}`;
     message.textContent = entry.content;
     return message;
   }));
   coachSessionTranscript.scrollTop = coachSessionTranscript.scrollHeight;
-  coachSessionReplyForm.hidden = activeCoachingSession.status !== 'active';
-  coachSessionFinishButton.hidden = activeCoachingSession.status !== 'active' || activeCoachingSession.answers.length < 5;
-  coachSessionStartButton.disabled = activeCoachingSession.status === 'active';
+  coachSessionReplyForm.hidden = !activeCoachingSession || activeCoachingSession.status !== 'active';
+  coachSessionFinishButton.hidden = !activeCoachingSession || activeCoachingSession.status !== 'active'
+    || activeCoachingSession.answers.length < 5;
+  coachSessionStartButton.disabled = activeCoachingSession?.status === 'active';
+}
+
+function renderMasterChatTranscript() {
+  masterChatLog.hidden = masterChatHistory.length === 0;
+  if (coachChatWelcome) coachChatWelcome.hidden = masterChatHistory.length > 0;
+  masterChatLog.replaceChildren(...masterChatHistory.map((entry) => {
+    const message = document.createElement('div');
+    message.className = `master-message ${entry.role === 'assistant' ? 'assistant' : 'user'}`;
+    message.textContent = entry.content;
+    return message;
+  }));
+  masterChatLog.scrollTop = masterChatLog.scrollHeight;
+}
+
+function newCoachId() {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `coach_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function renderCoachConversationList() {
+  if (!coachConversationList) return;
+  coachConversationList.replaceChildren();
+  const conversations = coachConversations.filter((conversation) => conversation.conversationType === 'chat');
+  if (!conversations.length) {
+    const empty = document.createElement('p');
+    empty.className = 'coach-chat-empty';
+    empty.textContent = coachConversationSearch?.value.trim()
+      ? 'گفت‌وگویی با این عبارت پیدا نشد.'
+      : 'هنوز گفت‌وگویی نداری. گفت‌وگوی جدید را بزن و از همین‌جا شروع کن.';
+    coachConversationList.appendChild(empty);
+    return;
+  }
+  conversations.forEach((conversation) => {
+    const item = document.createElement('article');
+    item.className = 'coach-chat-row';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'coach-chat-row-open';
+    const title = document.createElement('strong');
+    title.textContent = conversation.title || 'گفت‌وگوی استاد';
+    const preview = document.createElement('span');
+    const match = conversationSearchMatches[conversation.conversationId];
+    preview.textContent = match?.snippet || conversation.preview || `${Number(conversation.messageCount || 0)} پیام`;
+    open.append(title, preview);
+    open.addEventListener('click', async () => {
+      closeCoachChatDrawer({ restoreFocus: false });
+      try {
+        await openCoachConversation(conversation.conversationId);
+      } catch (error) {
+        masterChatStatus.textContent = error.message || 'بارگذاری گفت‌وگو ناموفق بود.';
+      }
+    });
+    const date = document.createElement('span');
+    date.textContent = coachSessionDate(conversation.updatedAt || conversation.createdAt);
+    date.className = 'coach-chat-row-date';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'coach-chat-row-delete';
+    remove.textContent = 'حذف';
+    remove.setAttribute('aria-label', `حذف ${title.textContent}`);
+    remove.addEventListener('click', async () => {
+      try {
+        await deleteCoachConversation(conversation);
+      } catch (error) {
+        masterChatListStatus.textContent = error.message || 'حذف گفت‌وگو ناموفق بود.';
+      }
+    });
+    const meta = document.createElement('div');
+    meta.className = 'coach-chat-row-meta';
+    meta.append(date, remove);
+    item.append(open, meta);
+    coachConversationList.appendChild(item);
+  });
+}
+
+function openCoachChatDrawer() {
+  coachChatDrawer.setAttribute('aria-hidden', 'false');
+  coachChatDrawerBackdrop.hidden = false;
+  coachChatHistoryToggle.setAttribute('aria-expanded', 'true');
+  document.body.classList.add('coach-drawer-open');
+  requestAnimationFrame(() => coachConversationSearch.focus());
+  loadCoachConversations(coachConversationSearch.value.trim()).catch((error) => {
+    masterChatListStatus.textContent = error.message || 'بارگذاری گفت‌وگوها ناموفق بود.';
+  });
+}
+
+function closeCoachChatDrawer({ restoreFocus = true } = {}) {
+  if (!coachChatDrawer || coachChatDrawer.getAttribute('aria-hidden') === 'true') return;
+  coachChatDrawer.setAttribute('aria-hidden', 'true');
+  coachChatDrawerBackdrop.hidden = true;
+  coachChatHistoryToggle.setAttribute('aria-expanded', 'false');
+  document.body.classList.remove('coach-drawer-open');
+  if (restoreFocus) coachChatHistoryToggle.focus();
+}
+
+function showCoachChatThread() {
+  closeCoachChatDrawer({ restoreFocus: false });
+  requestAnimationFrame(() => masterChatLog.scrollTo({ top: masterChatLog.scrollHeight, behavior: 'smooth' }));
+}
+
+async function readCoachApiPayload(response) {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { raw };
+  }
+}
+
+async function saveCoachConversation(conversation) {
+  const response = await apiFetch('/api/coach/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: conversation.conversationId,
+      conversationType: conversation.conversationType,
+      title: conversation.title,
+      style: conversation.style,
+      status: conversation.status || 'active',
+      summary: conversation.summary || '',
+      insight: conversation.insight || '',
+      commitments: conversation.commitments || [],
+      homework: conversation.homework || '',
+      followUp: conversation.followUp || '',
+      preview: conversation.preview || '',
+      messageCount: conversation.messageCount || 0,
+      legacyMigrated: conversation.legacyMigrated === true,
+    }),
+  });
+  const payload = await readCoachApiPayload(response);
+  if (!response.ok || !payload.conversation) {
+    const detail = payload.message || (payload.raw ? `پاسخ سرور: ${payload.raw.slice(0, 180)}` : `HTTP ${response.status}`);
+    throw new Error(`ذخیرهٔ گفت‌وگو در فضای ابری ناموفق بود (${detail}).`);
+  }
+  if (activeConversation?.conversationId === conversation.conversationId) {
+    activeConversation = payload.conversation;
+    coachChatActiveTitle.textContent = activeConversation.title || 'استاد';
+  }
+  coachConversations = [payload.conversation, ...coachConversations.filter((item) => item.conversationId !== payload.conversation.conversationId)]
+    .sort((left, right) => String(right.updatedAt || right.createdAt).localeCompare(String(left.updatedAt || left.createdAt)));
+  renderCoachConversationList();
+  return payload.conversation;
+}
+
+async function persistCoachMessage(conversationId, message) {
+  if (!message.id) message.id = newCoachId();
+  const response = await apiFetch(`/api/coach/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: message.id, role: message.role, content: message.content }),
+  });
+  const payload = await readCoachApiPayload(response);
+  if (!response.ok) {
+    const detail = payload.message || (payload.raw ? `پاسخ سرور: ${payload.raw.slice(0, 180)}` : `HTTP ${response.status}`);
+    throw new Error(`ذخیرهٔ پیام در فضای ابری ناموفق بود (${detail}).`);
+  }
+  if (activeConversation?.conversationId === conversationId) {
+    activeConversation = payload.conversation;
+    activeConversationSyncedCount += 1;
+  }
+  coachConversations = [payload.conversation, ...coachConversations.filter((item) => item.conversationId !== conversationId)]
+    .sort((left, right) => String(right.updatedAt || right.createdAt).localeCompare(String(left.updatedAt || left.createdAt)));
+  renderCoachConversationList();
+  return payload.message;
+}
+
+async function loadCoachConversations(query = '') {
+  const sequence = ++coachConversationLoadSequence;
+  const url = new URLSearchParams();
+  if (query) url.set('q', query);
+  const search = url.toString();
+  const response = await apiFetch(`/api/coach/conversations${search ? `?${search}` : ''}`);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !Array.isArray(payload.conversations)) throw new Error(payload.message || 'بارگذاری گفت‌وگوها ناموفق بود.');
+  if (sequence !== coachConversationLoadSequence) return payload.conversations;
+  coachConversations = payload.conversations.filter((conversation) => conversation.conversationType === 'chat');
+  conversationSearchMatches = payload.matches || {};
+  renderCoachConversationList();
+  return payload.conversations;
+}
+
+async function openCoachConversation(conversationId, { preserveScroll = false } = {}) {
+  const conversation = coachConversations.find((item) => item.conversationId === conversationId);
+  if (!conversation || conversation.conversationType !== 'chat') return;
+  const selectionSequence = ++coachConversationSelectionSequence;
+  const url = new URLSearchParams({ limit: '100' });
+  const response = await apiFetch(`/api/coach/conversations/${encodeURIComponent(conversationId)}/messages?${url}`);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !Array.isArray(payload.messages)) throw new Error(payload.message || 'خواندن پیام‌های گفت‌وگو ناموفق بود.');
+  if (selectionSequence !== coachConversationSelectionSequence) return;
+  activeConversation = conversation;
+  coachChatActiveTitle.textContent = conversation.title || 'استاد';
+  conversationHasMoreMessages = Boolean(payload.hasMore);
+  coachLoadOlderMessagesButton.hidden = !conversationHasMoreMessages;
+  activeCoachingSession = null;
+  activeConversationSyncedCount = payload.messages.length;
+  masterChatHistory = payload.messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+    sequence: message.sequence,
+  }));
+  masterChatStatus.textContent = '';
+  renderMasterChatTranscript();
+  renderCoachConversationList();
+  showCoachChatThread();
+  if (!preserveScroll) masterChatLog.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function createCoachConversation(title = '', { preserveDraft = false } = {}) {
+  const selectionSequence = ++coachConversationSelectionSequence;
+  coachConversationLoadSequence += 1;
+  const id = newCoachId();
+  const conversation = {
+    conversationId: id,
+    conversationType: 'chat',
+    title: title || 'گفت‌وگوی جدید',
+    style: 'supportive',
+    status: 'active',
+    messageCount: 0,
+    preview: '',
+    createdAt: new Date().toISOString(),
+  };
+  const saved = await saveCoachConversation(conversation);
+  if (selectionSequence !== coachConversationSelectionSequence) return saved;
+  activeConversation = saved;
+  activeConversationSyncedCount = 0;
+  conversationHasMoreMessages = false;
+  coachLoadOlderMessagesButton.hidden = true;
+  activeCoachingSession = null;
+  masterChatHistory = [];
+  coachChatActiveTitle.textContent = saved.title || 'استاد';
+  if (!preserveDraft) masterChatInput.value = '';
+  coachConversationSearch.value = '';
+  conversationSearchMatches = {};
+  renderMasterChatTranscript();
+  masterChatStatus.textContent = '';
+  showCoachChatThread();
+  return saved;
+}
+
+async function deleteCoachConversation(conversation) {
+  if (!window.confirm(`گفت‌وگوی «${conversation.title || 'بدون عنوان'}» و همهٔ پیام‌هایش برای همیشه حذف شود؟`)) return;
+  const response = await apiFetch(`/api/coach/conversations/${encodeURIComponent(conversation.conversationId)}`, { method: 'DELETE' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'حذف گفت‌وگو ناموفق بود.');
+  coachConversations = coachConversations.filter((item) => item.conversationId !== conversation.conversationId);
+  if (activeConversation?.conversationId === conversation.conversationId) {
+    activeConversation = null;
+    coachChatActiveTitle.textContent = 'استاد';
+    activeConversationSyncedCount = 0;
+    conversationHasMoreMessages = false;
+    coachLoadOlderMessagesButton.hidden = true;
+    masterChatHistory = [];
+    renderMasterChatTranscript();
+    masterChatStatus.textContent = 'گفت‌وگو و پیام‌هایش حذف شدند.';
+  }
+  renderCoachConversationList();
+}
+
+async function loadOlderCoachMessages() {
+  if (!activeConversation || !masterChatHistory.length || !conversationHasMoreMessages) return;
+  coachLoadOlderMessagesButton.disabled = true;
+  try {
+    const oldest = masterChatHistory[0].createdAt;
+    const query = new URLSearchParams({
+      limit: '100',
+      before: oldest,
+      beforeId: masterChatHistory[0].id,
+      beforeSequence: String(masterChatHistory[0].sequence || 0),
+    });
+    const response = await apiFetch(`/api/coach/conversations/${encodeURIComponent(activeConversation.conversationId)}/messages?${query}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !Array.isArray(payload.messages)) throw new Error(payload.message || 'بارگذاری پیام‌های قدیمی‌تر ناموفق بود.');
+    masterChatHistory = [...payload.messages.map((message) => ({
+      id: message.id, role: message.role, content: message.content, createdAt: message.createdAt, sequence: message.sequence,
+    })), ...masterChatHistory];
+    conversationHasMoreMessages = Boolean(payload.hasMore);
+    renderMasterChatTranscript();
+    masterChatLog.scrollTop = 0;
+  } catch (error) {
+    masterChatStatus.textContent = error.message || 'بارگذاری پیام‌های قدیمی‌تر ناموفق بود.';
+  } finally {
+    coachLoadOlderMessagesButton.hidden = !conversationHasMoreMessages;
+    coachLoadOlderMessagesButton.disabled = false;
+  }
+}
+
+function renderCoachMemories() {
+  if (!coachMemoryList) return;
+  coachMemoryList.replaceChildren();
+  if (!coachMemories.length) {
+    const empty = document.createElement('p');
+    empty.className = 'overview-empty';
+    empty.textContent = 'هنوز حافظه‌ای ثبت نشده است.';
+    coachMemoryList.appendChild(empty);
+    return;
+  }
+  coachMemories.forEach((memory) => {
+    const item = document.createElement('div');
+    item.className = 'coach-memory-item';
+    const content = document.createElement('span');
+    content.textContent = memory.content;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger';
+    remove.textContent = 'حذف';
+    remove.addEventListener('click', async () => {
+      if (!window.confirm('این مورد از حافظهٔ استاد حذف شود؟')) return;
+      try {
+        const response = await apiFetch(`/api/coach/memories/${encodeURIComponent(memory.id.replace(/^coach_memory_/, ''))}`, { method: 'DELETE' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || 'حذف حافظه ناموفق بود.');
+        coachMemories = coachMemories.filter((entry) => entry.id !== memory.id);
+        renderCoachMemories();
+        coachMemoryStatus.textContent = 'حافظه حذف شد.';
+      } catch (error) {
+        coachMemoryStatus.textContent = error.message || 'حذف حافظه ناموفق بود.';
+      }
+    });
+    item.append(content, remove);
+    coachMemoryList.appendChild(item);
+  });
+}
+
+async function loadCoachMemories() {
+  const response = await apiFetch('/api/coach/memories');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !Array.isArray(payload.memories)) throw new Error(payload.message || 'بارگذاری حافظهٔ استاد ناموفق بود.');
+  coachMemories = payload.memories;
+  renderCoachMemories();
+  coachMemoryStatus.textContent = `${coachMemories.length} نکته در حافظهٔ استاد است؛ نکته‌های تازه خودکار از مکالمه‌ها استخراج می‌شوند.`;
+}
+
+async function updateCoachMemory(messages) {
+  const response = await apiFetch('/api/coach/memories/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'به‌روزرسانی خودکار حافظه ناموفق بود.');
+  await loadCoachMemories();
+  coachMemoryStatus.textContent = `${payload.memoryCount || 0} نکتهٔ ماندگار در حافظهٔ استاد ذخیره شده است.`;
+}
+
+let coachConversationSearchTimer = 0;
+coachConversationSearch?.addEventListener('input', () => {
+  window.clearTimeout(coachConversationSearchTimer);
+  coachConversationSearchTimer = window.setTimeout(async () => {
+    try {
+      await loadCoachConversations(coachConversationSearch.value.trim());
+      masterChatListStatus.textContent = '';
+    } catch (error) {
+      masterChatListStatus.textContent = error.message || 'جست‌وجوی گفت‌وگو ناموفق بود.';
+    }
+  }, 250);
+});
+coachNewConversationButton?.addEventListener('click', async () => {
+  try {
+    await createCoachConversation();
+    masterChatInput.focus();
+  } catch (error) {
+    masterChatStatus.textContent = error.message || 'ساخت گفت‌وگوی جدید ناموفق بود.';
+  }
+});
+coachNewConversationDrawerButton?.addEventListener('click', async () => {
+  try {
+    await createCoachConversation();
+    masterChatInput.focus();
+  } catch (error) {
+    masterChatListStatus.textContent = error.message || 'ساخت گفت‌وگوی جدید ناموفق بود.';
+  }
+});
+coachChatHistoryToggle?.addEventListener('click', () => {
+  if (coachChatDrawer.getAttribute('aria-hidden') === 'false') closeCoachChatDrawer();
+  else openCoachChatDrawer();
+});
+document.getElementById('coachChatDrawerClose')?.addEventListener('click', () => closeCoachChatDrawer());
+coachChatDrawerBackdrop?.addEventListener('click', () => closeCoachChatDrawer({ restoreFocus: false }));
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeCoachChatDrawer();
+});
+document.querySelectorAll('[data-coach-prompt]').forEach((button) => {
+  button.addEventListener('click', () => {
+    masterChatInput.value = button.dataset.coachPrompt || '';
+    masterChatForm.requestSubmit();
+  });
+});
+masterChatInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    masterChatForm.requestSubmit();
+  }
+});
+masterChatInput?.addEventListener('input', () => {
+  masterChatInput.style.height = 'auto';
+  masterChatInput.style.height = `${Math.min(masterChatInput.scrollHeight, 150)}px`;
+});
+coachLoadOlderMessagesButton?.addEventListener('click', loadOlderCoachMessages);
+
+async function loadCoachSessions() {
+  const response = await apiFetch('/api/coach/sessions');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || 'خواندن جلسه‌های ذخیره‌شده ناموفق بود.');
+  if (!Array.isArray(payload.sessions)) throw new Error('فهرست جلسه‌های سرور معتبر نیست.');
+  coachingSessions = payload.sessions;
+  if (!activeCoachingSession) {
+    activeCoachingSession = coachingSessions.find((session) => session.status === 'active') || null;
+    if (activeCoachingSession) activeCoachingQuestion = Math.min(activeCoachingSession.answers?.length || 0, 5);
+  }
+  renderCoachSessionHistory();
+  renderCoachSessionTranscript();
 }
 
 function renderCoachSessionHistory() {
@@ -2858,61 +3295,50 @@ function renderCoachSessionHistory() {
     return;
   }
   coachingSessions.forEach((session) => {
-    const card = document.createElement('article');
-    card.className = 'coach-session-history-item';
-    const title = document.createElement('h3');
+    const item = document.createElement('article');
+    item.className = `coach-session-history-item${activeCoachingSession?.id === session.id ? ' active' : ''}`;
+    const title = document.createElement('strong');
     title.textContent = `${coachSessionDate(session.createdAt)} · ${session.status === 'completed' ? 'پایان‌یافته' : 'در جریان'} · ${session.style === 'direct' ? 'رک و سخت‌گیر' : 'آرام و حمایتی'}`;
-    card.appendChild(title);
-    if (session.summary) {
-      const summary = document.createElement('p');
-      summary.textContent = `خلاصه: ${session.summary}`;
-      card.appendChild(summary);
-    }
-    if (session.insight) {
-      const insight = document.createElement('p');
-      insight.textContent = `بینش: ${session.insight}`;
-      card.appendChild(insight);
-    }
-    if (session.homework) {
-      const homework = document.createElement('p');
-      homework.textContent = `تمرین: ${session.homework}`;
-      card.appendChild(homework);
-    }
-    if (Array.isArray(session.commitments) && session.commitments.length) {
-      const commitments = document.createElement('p');
-      commitments.textContent = `قول‌ها: ${session.commitments.join(' · ')}`;
-      card.appendChild(commitments);
-    }
-    if (session.followUp) {
-      const followUp = document.createElement('p');
-      followUp.textContent = `پیگیری جلسهٔ بعد: ${session.followUp}`;
-      card.appendChild(followUp);
-    }
-    if (session.status === 'active') {
-      const resume = document.createElement('button');
-      resume.type = 'button';
-      resume.textContent = 'ادامهٔ جلسه';
-      resume.addEventListener('click', () => {
-        activeCoachingSession = { ...session };
-        activeCoachingQuestion = Math.min(session.answers.length, 5);
-        document.getElementById('coachStyle').value = session.style;
-        coachSessionStatus.textContent = 'جلسهٔ ذخیره‌شده بارگذاری شد.';
+    const summary = document.createElement('p');
+    summary.textContent = session.summary
+      ? `خلاصه: ${session.summary}`
+      : `${session.answers?.length || 0} پاسخ از ۵`;
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.textContent = session.status === 'active' ? 'ادامهٔ جلسه' : 'مشاهدهٔ جلسه';
+    open.addEventListener('click', () => {
+      activeCoachingSession = { ...session };
+      activeCoachingQuestion = Math.min(session.answers.length, 5);
+      document.getElementById('coachStyle').value = session.style;
+      coachSessionStatus.textContent = session.status === 'active'
+        ? 'جلسهٔ ذخیره‌شده بارگذاری شد و می‌توانی ادامه بدهی.'
+        : 'جلسهٔ قبلی بارگذاری شد؛ برای شروع جلسهٔ تازه روی دکمهٔ بالا بزن.';
+      renderCoachSessionHistory();
+      renderCoachSessionTranscript();
+      coachSessionTranscript.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger';
+    remove.textContent = 'حذف';
+    remove.addEventListener('click', async () => {
+      if (!window.confirm('این جلسه و پیام‌های ذخیره‌شده‌اش حذف شود؟')) return;
+      try {
+        const response = await apiFetch(`/api/coach/sessions/${encodeURIComponent(session.id)}`, { method: 'DELETE' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || 'حذف جلسه ناموفق بود.');
+        coachingSessions = coachingSessions.filter((candidate) => candidate.id !== session.id);
+        if (activeCoachingSession?.id === session.id) activeCoachingSession = null;
+        coachSessionStatus.textContent = 'جلسه حذف شد.';
+        renderCoachSessionHistory();
         renderCoachSessionTranscript();
-        coachSessionTranscript.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
-      card.appendChild(resume);
-    }
-    coachSessionHistory.appendChild(card);
+      } catch (error) {
+        coachSessionStatus.textContent = error.message || 'حذف جلسه ناموفق بود.';
+      }
+    });
+    item.append(title, summary, open, remove);
+    coachSessionHistory.appendChild(item);
   });
-}
-
-async function loadCoachSessions() {
-  const response = await apiFetch('/api/coach/sessions');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message || 'خواندن جلسه‌های ذخیره‌شده ناموفق بود.');
-  if (!Array.isArray(payload.sessions)) throw new Error('فهرست جلسه‌های سرور معتبر نیست.');
-  coachingSessions = payload.sessions;
-  renderCoachSessionHistory();
 }
 
 async function saveCoachSession(session) {
@@ -2926,7 +3352,7 @@ async function saveCoachSession(session) {
   const saved = payload.session;
   coachingSessions = [saved, ...coachingSessions.filter((item) => item.id !== saved.id)]
     .sort((left, right) => String(right.updatedAt || right.createdAt).localeCompare(String(left.updatedAt || left.createdAt)));
-  activeCoachingSession = saved.status === 'active' ? saved : null;
+  activeCoachingSession = saved;
   renderCoachSessionHistory();
   renderCoachSessionTranscript();
   return saved;
@@ -2976,6 +3402,8 @@ async function startCoachSession() {
     coachSessionStartButton.disabled = false;
   } finally {
     coachSessionBusy = false;
+    renderCoachSessionHistory();
+    renderCoachSessionTranscript();
   }
 }
 
@@ -3022,7 +3450,12 @@ async function handleCoachSessionReply(event) {
     if (!response.ok) throw new Error(payload.message || 'پاسخ مربی دریافت نشد.');
     activeCoachingSession.messages.push({ role: 'assistant', content: payload.reply });
     await saveCoachSession(activeCoachingSession);
-    coachSessionStatus.textContent = 'پاسخ و حافظهٔ جلسه در فضای ابری ذخیره شد.';
+    try {
+      await updateCoachMemory(activeCoachingSession.messages);
+      coachSessionStatus.textContent = 'پاسخ جلسه ذخیره شد و حافظهٔ خودکار استاد به‌روزرسانی شد.';
+    } catch (memoryError) {
+      coachSessionStatus.textContent = `پاسخ جلسه ذخیره شد، اما حافظه به‌روزرسانی نشد: ${memoryError.message}`;
+    }
   } catch (error) {
     coachSessionStatus.textContent = `${error.message || 'ادامهٔ جلسه ناموفق بود.'} پاسخ‌های ثبت‌شده در این صفحه باقی‌اند؛ اتصال را بررسی و دوباره ارسال کن.`;
   } finally {
@@ -3060,8 +3493,8 @@ async function finishCoachSession() {
 }
 
 coachSessionStartButton?.addEventListener('click', startCoachSession);
-coachSessionReplyForm?.addEventListener('submit', handleCoachSessionReply);
 coachSessionFinishButton?.addEventListener('click', finishCoachSession);
+coachSessionReplyForm?.addEventListener('submit', handleCoachSessionReply);
 
 dailyCheckinForm?.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -3118,6 +3551,8 @@ masterReportButton?.addEventListener('click', async () => {
 
 function appendMasterMessage(role, text) {
   if (!masterChatLog) return;
+  masterChatLog.hidden = false;
+  if (coachChatWelcome) coachChatWelcome.hidden = true;
   const message = document.createElement('div');
   message.className = `master-message ${role}`;
   message.textContent = text;
@@ -3125,16 +3560,49 @@ function appendMasterMessage(role, text) {
   masterChatLog.scrollTop = masterChatLog.scrollHeight;
 }
 
-masterChatForm?.addEventListener('submit', async (event) => {
+function appendCoachTypingIndicator() {
+  const indicator = document.createElement('div');
+  indicator.className = 'master-message assistant coach-typing';
+  indicator.setAttribute('role', 'status');
+  indicator.setAttribute('aria-label', 'استاد در حال نوشتن پاسخ است');
+  indicator.innerHTML = '<span></span><span></span><span></span>';
+  masterChatLog.appendChild(indicator);
+  masterChatLog.scrollTop = masterChatLog.scrollHeight;
+  return indicator;
+}
+
+async function handleFreeMasterChat(event) {
   event.preventDefault();
+  if (masterChatSend.disabled) return;
   const message = masterChatInput?.value.trim();
   if (!message) return;
-  appendMasterMessage('user', message);
-  masterChatInput.value = '';
   masterChatSend.disabled = true;
-  masterChatSend.textContent = 'در حال پاسخ...';
-  const nextHistory = masterChatHistory.concat([{ role: 'user', content: message }]).slice(-12);
+  masterChatSend.textContent = '…';
+  let userMessageSaved = false;
+  let typingIndicator = null;
+  let conversationId = '';
   try {
+    const isFirstMessage = !activeConversation?.messageCount;
+    if (!activeConversation) await createCoachConversation(message.slice(0, 80), { preserveDraft: true });
+    conversationId = activeConversation.conversationId;
+    if (isFirstMessage && activeConversation.title === 'گفت‌وگوی جدید') {
+      activeConversation.title = message.slice(0, 80);
+      await saveCoachConversation(activeConversation);
+    }
+    const nextHistory = (activeConversation?.conversationId === conversationId ? masterChatHistory : [])
+      .concat([{ role: 'user', content: message }]).slice(-12);
+    const userMessage = { id: newCoachId(), role: 'user', content: message };
+    await persistCoachMessage(conversationId, userMessage);
+    userMessageSaved = true;
+    if (masterChatInput.value.trim() === message) {
+      masterChatInput.value = '';
+      masterChatInput.style.height = 'auto';
+    }
+    if (activeConversation?.conversationId === conversationId) {
+      masterChatHistory = nextHistory;
+      renderMasterChatTranscript();
+      typingIndicator = appendCoachTypingIndicator();
+    }
     const response = await apiFetch('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3142,20 +3610,88 @@ masterChatForm?.addEventListener('submit', async (event) => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || 'پاسخ هوش مصنوعی دریافت نشد.');
-    appendMasterMessage('assistant', payload.reply);
-    masterChatHistory = nextHistory.concat([{ role: 'assistant', content: payload.reply }]).slice(-12);
-    if (Number.isFinite(payload.tradeCount)) {
+    const assistantMessage = {
+      id: newCoachId(),
+      role: 'assistant',
+      content: payload.reply,
+    };
+    typingIndicator?.remove();
+    typingIndicator = null;
+    const conversationHistory = nextHistory.concat([{ role: 'assistant', content: payload.reply }]).slice(-12);
+    if (activeConversation?.conversationId === conversationId) {
+      appendMasterMessage('assistant', payload.reply);
+      masterChatHistory = conversationHistory;
+    }
+    try {
+      await persistCoachMessage(conversationId, assistantMessage);
+    } catch (error) {
+      if (activeConversation?.conversationId === conversationId) {
+        masterChatStatus.textContent = `پاسخ استاد نمایش داده شد، اما ذخیرهٔ ابری آن ناموفق بود: ${error.message || 'خطای نامشخص'}`;
+      }
+      return;
+    }
+    let titleNotice = '';
+    if (isFirstMessage) {
+      const targetConversation = coachConversations.find((item) => item.conversationId === conversationId);
+      const fallbackTitle = targetConversation?.title || message.slice(0, 80);
+      try {
+        const titleResponse = await apiFetch('/api/coach/conversations/title', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userMessage: message, assistantMessage: payload.reply }),
+        });
+        const titlePayload = await titleResponse.json().catch(() => ({}));
+        if (!titleResponse.ok || !titlePayload.title) {
+          throw new Error(titlePayload.message || `ساخت عنوان ناموفق بود (HTTP ${titleResponse.status}).`);
+        }
+        if (!targetConversation) throw new Error('گفت‌وگو برای تغییر عنوان پیدا نشد.');
+        targetConversation.title = titlePayload.title;
+        await saveCoachConversation(targetConversation);
+        if (activeConversation?.conversationId === conversationId) coachChatActiveTitle.textContent = targetConversation.title;
+      } catch (error) {
+        if (targetConversation) targetConversation.title = fallbackTitle;
+        if (activeConversation?.conversationId === conversationId) coachChatActiveTitle.textContent = fallbackTitle;
+        titleNotice = `عنوان خودکار ساخته نشد: ${error.message || 'خطای نامشخص'}`;
+      }
+    }
+    try {
+      await updateCoachMemory(conversationHistory);
+      if (activeConversation?.conversationId === conversationId) {
+        masterChatStatus.textContent = `گفت‌وگو ذخیره شد؛ حافظهٔ استاد هم خودکار به‌روزرسانی شد.${titleNotice ? ` ${titleNotice}` : ''}`;
+      }
+    } catch (memoryError) {
+      if (activeConversation?.conversationId === conversationId) {
+        masterChatStatus.textContent = `گفت‌وگو ذخیره شد، اما حافظه به‌روزرسانی نشد: ${memoryError.message}${titleNotice ? ` ${titleNotice}` : ''}`;
+      }
+    }
+    if (Number.isFinite(payload.tradeCount) && activeConversation?.conversationId === conversationId) {
       const contextNote = payload.omittedTradeCount
         ? `زمینهٔ پاسخ: ${payload.includedTradeCount} از ${payload.tradeCount} معامله؛ تعدادی از معاملات قدیمی‌تر به محدودیت حجم پیام نرسیدند.`
         : `زمینهٔ پاسخ: ${payload.includedTradeCount} معاملهٔ ثبت‌شده.`;
       appendMasterMessage('system', contextNote);
     }
   } catch (error) {
-    appendMasterMessage('assistant', error.message || 'خطا در ارتباط با استاد.');
+    typingIndicator?.remove();
+    if ((!conversationId || activeConversation?.conversationId === conversationId)
+      && (!activeConversation || masterChatInput.value.trim() === message)) {
+      masterChatStatus.textContent = userMessageSaved
+        ? `پیامت ذخیره شد، اما پاسخ دریافت نشد: ${error.message || 'خطای نامشخص'}`
+        : `پیام ذخیره نشد؛ دوباره تلاش کن. ${error.message || ''}`;
+    }
+    if (!userMessageSaved && (!conversationId || activeConversation?.conversationId === conversationId)
+      && !masterChatInput.value.trim()) {
+      masterChatInput.value = message;
+      masterChatInput.dispatchEvent(new Event('input'));
+    }
   } finally {
+    typingIndicator?.remove();
     masterChatSend.disabled = false;
-    masterChatSend.textContent = 'ارسال';
+    masterChatSend.textContent = '↑';
   }
+}
+
+masterChatForm?.addEventListener('submit', (event) => {
+  handleFreeMasterChat(event);
 });
 
 document.getElementById('openAfterLossRoom')?.addEventListener('click', () => {
@@ -3305,11 +3841,19 @@ async function hydrateApp() {
   renderAll();
   try {
     await loadCoachSessions();
-    coachSessionStatus.textContent = coachingSessions.length
-      ? `${coachingSessions.length} جلسه از فضای ذخیره‌سازی مشترک بارگذاری شد.`
-      : 'جلسه‌ها هنوز در فضای ذخیره‌سازی مشترک ثبت نشده‌اند.';
   } catch (error) {
     coachSessionStatus.textContent = `${error.message} وضعیت اتصال Cloudflare و پایگاه D1 را بررسی کن.`;
+  }
+  try {
+    await loadCoachConversations();
+    masterChatListStatus.textContent = '';
+  } catch (error) {
+    masterChatListStatus.textContent = `${error.message} وضعیت اتصال Cloudflare و پایگاه D1 را بررسی کن.`;
+  }
+  try {
+    await loadCoachMemories();
+  } catch (error) {
+    coachMemoryStatus.textContent = error.message || 'بارگذاری حافظهٔ استاد ناموفق بود.';
   }
   try {
     await syncCentralRecords();

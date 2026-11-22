@@ -348,6 +348,10 @@
 
       .master-view[hidden] { display: none !important; }
       .master-view { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+      .master-view-heading { grid-column: 1 / -1; padding: 3px 2px 6px; }
+      .master-view-heading h1 { margin: 0 0 6px; font-size: 21px; }
+      .master-view-heading p { margin: 0; color: var(--text-dim); font-size: 11px; line-height: 1.8; }
+      .summary-grid[hidden], .calendar-wrap[hidden] { display: none !important; }
       .master-card { min-height: 150px; padding: 18px; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(15,23,27,.72); }
       .master-card h2 { margin: 0 0 8px; font-size: 15px; }
       .master-card p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.9; }
@@ -452,10 +456,12 @@
       .coach-session-send textarea { flex: 1; min-height: 46px; resize: vertical; border: 1px solid rgba(255,255,255,.10); border-radius: 9px; background: rgba(255,255,255,.04); color: var(--text); padding: 10px; }
       .coach-session-finish { margin-top: 10px; background: var(--cyan); }
       .coach-session-history { display: grid; gap: 10px; margin-top: 14px; }
-      .coach-session-history-item { padding: 12px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(3,8,12,.25); }
-      .coach-session-history-item h3 { margin: 0 0 6px; font-size: 12px; }
+      .coach-session-history-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 12px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(3,8,12,.25); }
+      .coach-session-history-item.active { border-color: rgba(0,245,160,.35); }
+      .coach-session-history-item strong { font-size: 12px; }
       .coach-session-history-item p { margin: 5px 0; overflow-wrap: anywhere; }
       .coach-session-history-item button { min-height: 34px; margin-top: 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: transparent; color: var(--text); padding: 0 10px; cursor: pointer; }
+      .coach-session-history-item button.danger { border-color: rgba(255,74,107,.25); color: var(--red); }
       .coach-session-storage-note { margin-top: 12px !important; font-size: 10px !important; color: var(--text-dim); }
       .api-settings[hidden] { display: none !important; }
       .api-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -472,16 +478,86 @@
       .api-setting-test { min-height: 38px; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; background: rgba(255,255,255,.05); color: var(--text); padding: 0 14px; font-weight: 700; cursor: pointer; }
       .api-setting-test:disabled { opacity: .55; cursor: wait; }
       .api-settings-note { grid-column: 1 / -1; }
-      .master-chat { grid-column: 1 / -1; min-height: 320px; }
-      .master-chat-log { min-height: 220px; max-height: 420px; overflow: auto; margin-bottom: 12px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); }
-      .master-message { max-width: 78%; margin: 8px 0; padding: 10px 12px; border-radius: 12px; line-height: 1.8; font-size: 12px; white-space: pre-wrap; }
-      .master-message.user { margin-right: auto; background: rgba(0,212,245,.10); border: 1px solid rgba(0,212,245,.15); }
-      .master-message.assistant { margin-left: auto; background: rgba(0,245,160,.09); border: 1px solid rgba(0,245,160,.14); }
+      .coach-view[hidden] { display: none !important; }
+      .coach-view { position: relative; height: min(820px, calc(100dvh - 190px)); min-height: 430px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 20px; background: radial-gradient(ellipse at 50% 0, rgba(0,245,160,.055), transparent 48%), rgba(7,13,17,.88); box-shadow: 0 22px 65px rgba(0,0,0,.24), inset 0 1px rgba(255,255,255,.035); }
+      .coach-chat-shell { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; }
+      .coach-chat-header { z-index: 1; display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; align-items: center; gap: 10px; min-height: 68px; padding: 0 18px; border-bottom: 1px solid rgba(255,255,255,.075); background: rgba(9,15,19,.78); backdrop-filter: blur(18px); }
+      .coach-active-view #newTradeBtn, .coach-active-view .xh-live-badge { display: none; }
+      .coach-chat-menu-button, .coach-chat-new-top { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid rgba(255,255,255,.09); border-radius: 14px; background: rgba(255,255,255,.035); color: var(--text-muted); cursor: pointer; transition: .18s ease; }
+      .coach-chat-menu-button { gap: 3px; align-content: center; }
+      .coach-chat-menu-button span { display: block; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+      .coach-chat-menu-button:hover, .coach-chat-new-top:hover { border-color: rgba(0,245,160,.32); background: rgba(0,245,160,.08); color: var(--green); }
+      .coach-chat-new-top { color: var(--green); font-size: 23px; }
+      .coach-chat-brand { display: flex; align-items: center; justify-self: center; gap: 10px; min-width: 0; }
+      .coach-chat-brand > div { display: grid; gap: 3px; text-align: center; }
+      .coach-chat-brand strong { max-width: min(52vw, 320px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+      .coach-chat-brand > div > span { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-dim); font-size: 10px; }
+      .coach-chat-brand > div > span i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px rgba(0,245,160,.75); }
+      .coach-avatar { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(0,245,160,.28); border-radius: 12px; background: linear-gradient(145deg, rgba(0,245,160,.2), rgba(0,212,245,.08)); color: var(--green); font-size: 13px; font-weight: 900; }
+      .coach-chat-status { min-height: 0; margin: 0; padding: 0 20px; color: var(--text-dim); font-size: 10px; line-height: 1.7; }
+      .coach-chat-status:not(:empty) { padding-top: 7px; }
+      .coach-chat-welcome { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; width: min(680px, 100%); margin: 0 auto; padding: 28px 24px 12px; text-align: center; }
+      .coach-chat-welcome[hidden] { display: none !important; }
+      .coach-welcome-orb { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 19px; border: 1px solid rgba(0,245,160,.22); border-radius: 20px; background: radial-gradient(circle at 35% 20%, rgba(0,245,160,.2), rgba(0,212,245,.06)); color: var(--green); font-size: 28px; box-shadow: 0 0 35px rgba(0,245,160,.08); }
+      .coach-chat-welcome h1 { margin: 0; font-size: clamp(20px, 3vw, 27px); letter-spacing: -.3px; }
+      .coach-chat-welcome > p { max-width: 480px; margin: 11px 0 23px; color: var(--text-dim); font-size: 12px; line-height: 2; }
+      .coach-prompt-suggestions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+      .coach-prompt-suggestions button { min-height: 38px; padding: 7px 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; background: rgba(255,255,255,.028); color: var(--text-muted); font: inherit; font-size: 10px; cursor: pointer; transition: .18s ease; }
+      .coach-prompt-suggestions button:hover { border-color: rgba(0,245,160,.28); color: var(--green); background: rgba(0,245,160,.05); }
+      .coach-chat-search { width: 100%; min-height: 42px; margin: 0 0 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 12px; background: rgba(255,255,255,.04); color: var(--text); padding: 0 12px; font: inherit; }
+      .coach-chat-list { display: grid; gap: 7px; flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 2px 4px 12px; }
+      .coach-chat-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.3); transition: border-color .16s ease, background .16s ease; }
+      .coach-chat-row:hover { border-color: rgba(0,245,160,.28); background: rgba(0,245,160,.035); }
+      .coach-chat-row-open { display: grid; gap: 4px; min-width: 0; padding: 0; border: 0; background: none; color: var(--text); text-align: right; cursor: pointer; }
+      .coach-chat-row-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 750; }
+      .coach-chat-row-open span { overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+      .coach-chat-row-meta { display: flex; align-items: center; gap: 10px; color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+      .coach-chat-row-delete { border: 0; background: transparent; color: var(--text-dim); font-size: 11px; cursor: pointer; }
+      .coach-chat-row-delete:hover { color: var(--red); }
+      .coach-chat-empty { padding: 42px 12px; color: var(--text-dim); text-align: center; font-size: 12px; line-height: 1.9; }
+      .coach-chat-drawer-backdrop[hidden] { display: none; }
+      .coach-chat-drawer-backdrop { position: absolute; z-index: 5; inset: 0; background: rgba(0,0,0,.62); backdrop-filter: blur(3px); }
+      .coach-chat-drawer { position: absolute; z-index: 6; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: min(370px, 88%); padding: 19px; border-left: 1px solid rgba(255,255,255,.09); background: rgba(12,19,23,.98); box-shadow: -20px 0 70px rgba(0,0,0,.34); visibility: hidden; pointer-events: none; transform: translateX(102%); transition: transform .24s cubic-bezier(.2,.8,.2,1), visibility 0s linear .24s; }
+      .coach-chat-drawer[aria-hidden="false"] { visibility: visible; pointer-events: auto; transform: translateX(0); transition: transform .24s cubic-bezier(.2,.8,.2,1), visibility 0s; }
+      .coach-drawer-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+      .coach-drawer-header > div { display: grid; gap: 4px; }
+      .coach-drawer-header strong { font-size: 17px; }
+      .coach-drawer-header span { color: var(--text-dim); font-size: 10px; }
+      .coach-drawer-header button { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.04); color: var(--text-muted); font-size: 23px; cursor: pointer; }
+      .coach-drawer-new { min-height: 43px; margin-bottom: 12px; border: 1px solid rgba(0,245,160,.24); border-radius: 12px; background: rgba(0,245,160,.09); color: var(--green); font: inherit; font-weight: 750; cursor: pointer; }
+      .master-chat-log { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; margin: 0; padding: 20px clamp(14px, 7vw, 72px); border: 0; border-radius: 0; background: transparent; }
+      .master-chat-log[hidden] { display: none !important; }
+      .master-chat-log:empty { min-height: 0; }
+      .master-message { max-width: min(82%, 720px); margin: 12px 0; padding: 12px 14px; border-radius: 15px; line-height: 1.9; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .master-message.user { margin-right: auto; background: rgba(0,212,245,.10); border: 1px solid rgba(0,212,245,.15); border-bottom-right-radius: 5px; }
+      .master-message.assistant { margin-left: auto; background: rgba(0,245,160,.075); border: 1px solid rgba(0,245,160,.12); border-bottom-left-radius: 5px; }
       .master-message.system { max-width: 100%; color: var(--text-dim); font-size: 10px; text-align: center; }
-      .master-chat-form { display: flex; gap: 8px; }
-      .master-chat-form textarea { flex: 1; min-height: 48px; resize: vertical; border: 1px solid rgba(255,255,255,.10); border-radius: 10px; background: rgba(255,255,255,.04); color: var(--text); padding: 10px 12px; }
-      .master-chat-form button { border: 0; border-radius: 10px; background: var(--green); color: #06110d; padding: 0 18px; font-weight: 800; cursor: pointer; }
+      .master-message.coach-typing { display: flex; align-items: center; gap: 5px; min-height: 42px; }
+      .coach-typing span { width: 5px; height: 5px; border-radius: 50%; background: var(--green); animation: coachTypingPulse 1s ease-in-out infinite; }
+      .coach-typing span:nth-child(2) { animation-delay: .14s; }
+      .coach-typing span:nth-child(3) { animation-delay: .28s; }
+      @keyframes coachTypingPulse { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+      .master-chat-form { display: flex; align-items: end; gap: 10px; width: min(780px, calc(100% - 32px)); margin: 0 auto 8px; padding: 9px 10px 9px 9px; border: 1px solid rgba(255,255,255,.12); border-radius: 18px; background: rgba(18,27,31,.94); box-shadow: 0 12px 35px rgba(0,0,0,.22), inset 0 1px rgba(255,255,255,.035); }
+      .master-chat-form:focus-within { border-color: rgba(0,245,160,.3); box-shadow: 0 0 0 3px rgba(0,245,160,.045), 0 12px 35px rgba(0,0,0,.22); }
+      .master-chat-form textarea { flex: 1; min-height: 42px; max-height: 150px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); padding: 8px 10px; font: inherit; line-height: 1.8; }
+      .master-chat-form button { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; border: 0; border-radius: 13px; background: var(--green); color: #06110d; font-size: 24px; font-weight: 800; cursor: pointer; transition: .18s ease; }
+      .master-chat-form button:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,245,160,.2); }
       .master-chat-form button:disabled { opacity: .55; cursor: wait; }
+      .coach-chat-disclaimer { margin: 0 0 12px; color: var(--text-dim); text-align: center; font-size: 9px; }
+      body.coach-drawer-open { overflow: hidden; }
+      .coach-conversation-list { display: grid; gap: 8px; }
+      .coach-memory-list { display: grid; gap: 8px; margin: 12px 0; }
+      .coach-memory-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 10px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(3,8,12,.25); color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+      .coach-memory-item button { min-height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--text-dim); cursor: pointer; }
+      .coach-memory-item button:hover { color: var(--red); }
+      .coach-memory-item .danger { border-color: rgba(255,74,107,.25); background: rgba(255,74,107,.06); color: var(--red); }
+      .coach-load-older { display: block; margin: 8px auto; min-height: 36px; border: 1px solid rgba(0,245,160,.2); border-radius: 9px; background: rgba(0,245,160,.08); color: var(--green); padding: 0 12px; cursor: pointer; }
+      .coach-load-older[hidden] { display: none !important; }
+      .coach-memory-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      .coach-memory-details { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.08); }
+      .coach-memory-details summary { color: var(--cyan); cursor: pointer; }
+      .coach-memory-item { grid-template-columns: minmax(0, 1fr) auto; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+      .coach-memory-status { color: var(--text-dim); font-size: 10px; }
       .pretrade-overlay[hidden] { display: none; }
       .coach-quick-card { grid-column: 1 / -1; }
       .coach-quick-actions, .coach-quick-fields, .pretrade-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
@@ -1023,6 +1099,7 @@
         .master-view { grid-template-columns: 1fr; }
         .master-chat { grid-column: auto; }
         .master-message { max-width: 92%; }
+        .coach-view { height: min(820px, calc(100dvh - 250px)); }
         .checkin-card { grid-column: auto; }
         .checkin-form { grid-template-columns: 1fr; }
       }
@@ -1031,18 +1108,29 @@
         .overview-grid { grid-template-columns: 1fr; }
         .overview-recent { grid-column: auto; }
         .overview-heading { align-items: start; flex-direction: column; }
+        .coach-view { height: max(380px, calc(var(--tg-viewport-height, 100dvh) - 245px)); min-height: 380px; border-radius: 16px; }
+        .coach-chat-header { min-height: 60px; padding: 0 11px; }
+        .coach-chat-welcome { padding: 18px 17px 8px; }
+        .coach-chat-welcome > p { font-size: 11px; }
+        .coach-prompt-suggestions { gap: 6px; }
+        .coach-prompt-suggestions button { min-height: 35px; }
+        .master-chat-log { padding: 12px; }
+        .master-chat-form { width: calc(100% - 18px); margin-bottom: 6px; }
+        .coach-chat-disclaimer { margin-bottom: 8px; }
+        .master-message { max-width: 92%; font-size: 12px; }
         .push-enable-btn { padding: 7px 9px; font-size: 11px; }
         .xh-nav {
           order: 3;
           width: 100%;
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: repeat(5, minmax(0, 1fr));
           gap: 6px;
         }
         .xh-nav-btn {
           min-width: 0;
-          padding: 10px 6px;
+          padding: 9px 2px;
           text-align: center;
+          font-size: 10px;
         }
         .xh-live-badge {
           max-width: 100%;
@@ -1053,7 +1141,13 @@
         }
 
         .xh-body {
-          padding: 18px 16px 24px;
+          padding: 12px 10px 18px;
+        }
+        body.coach-active-view .xh-body { padding: 14px 18px 18px; }
+        body.coach-active-view .xh-header { padding-bottom: 12px; }
+        @media (max-width: 640px) {
+          body.coach-active-view .xh-body { padding: 10px 8px 14px; }
+          body.coach-active-view .xh-header { padding: 11px 12px; }
         }
 
         .xh-header {
@@ -1071,7 +1165,7 @@
       }
     </style>
   </head>
-  <body>
+  <body class="coach-active-view">
     <div class="xh-root">
       <div class="xh-shell">
         <header class="xh-header">
@@ -1081,10 +1175,11 @@
           </div>
 
           <nav class="xh-nav" aria-label="main navigation">
-            <button type="button" class="xh-nav-btn active" data-journal-view="journal">ژورنال</button>
-            <button type="button" class="xh-nav-btn" data-journal-view="overview">نمای کلی</button>
-            <button type="button" class="xh-nav-btn" data-journal-view="master">استاد</button>
-            <button type="button" class="xh-nav-btn" data-journal-view="settings">تنظیمات</button>
+            <button type="button" class="xh-nav-btn active" aria-pressed="true" data-journal-view="coach">استاد</button>
+            <button type="button" class="xh-nav-btn" aria-pressed="false" data-journal-view="master">آمار</button>
+            <button type="button" class="xh-nav-btn" aria-pressed="false" data-journal-view="journal">ژورنال</button>
+            <button type="button" class="xh-nav-btn" aria-pressed="false" data-journal-view="overview">نمای کلی</button>
+            <button type="button" class="xh-nav-btn" aria-pressed="false" data-journal-view="settings">تنظیمات</button>
           </nav>
 
           <button id="newTradeBtn" type="button" class="action-btn">+ ثبت معامله</button>
@@ -1101,7 +1196,7 @@
         </header>
 
         <main class="xh-body">
-          <div class="summary-grid" id="summaryGrid"></div>
+          <div class="summary-grid" id="summaryGrid" hidden></div>
 
           <section id="overviewView" class="overview-view" hidden></section>
 
@@ -1148,7 +1243,89 @@
             </div>
           </section>
 
+          <section id="coachView" class="coach-view">
+            <div class="coach-chat-shell">
+              <header class="coach-chat-header">
+                <button id="coachChatHistoryToggle" class="coach-chat-menu-button" type="button" aria-label="نمایش گفت‌وگوهای قبلی" aria-expanded="false">
+                  <span></span><span></span><span></span>
+                </button>
+                <div class="coach-chat-brand">
+                  <span class="coach-avatar" aria-hidden="true">X</span>
+                  <div>
+                    <strong id="coachChatActiveTitle">استاد</strong>
+                    <span><i></i> مربی ذهنی ترید</span>
+                  </div>
+                </div>
+                <button id="coachNewConversation" class="coach-chat-new-top" type="button" aria-label="گفت‌وگوی جدید" title="گفت‌وگوی جدید">＋</button>
+              </header>
+              <p id="masterChatStatus" class="coach-chat-status" role="status" aria-live="polite"></p>
+              <div id="coachChatWelcome" class="coach-chat-welcome">
+                <span class="coach-welcome-orb" aria-hidden="true">✦</span>
+                <h1>سلام، از کجا شروع کنیم؟</h1>
+                <p>دربارهٔ تصمیم‌ها، احساسات یا الگوهای تریدت حرف بزن. من همدل می‌مانم، اما اگر لازم باشد صریح و بی‌تعارف می‌گویم.</p>
+                <div class="coach-prompt-suggestions">
+                  <button type="button" data-coach-prompt="کمکم کن آخرین معامله‌ام را از نظر تصمیم‌گیری مرور کنم.">مرور یک معامله</button>
+                  <button type="button" data-coach-prompt="چطور جلوی تصمیم عجولانه و FOMO را بگیرم؟">کنترل تصمیم عجولانه</button>
+                  <button type="button" data-coach-prompt="از الگوهای ترید من چه چیزی یادت مانده؟">مرور الگوهای من</button>
+                </div>
+              </div>
+              <div id="masterChatLog" class="master-chat-log" aria-live="polite" hidden></div>
+              <button id="coachLoadOlderMessages" class="coach-load-older" type="button" hidden>بارگذاری پیام‌های قدیمی‌تر</button>
+              <form id="masterChatForm" class="master-chat-form">
+                <textarea id="masterChatInput" maxlength="3000" rows="1" placeholder="پیامت را برای استاد بنویس..." aria-label="پیام برای استاد"></textarea>
+                <button id="masterChatSend" type="submit" aria-label="ارسال پیام">↑</button>
+              </form>
+              <p class="coach-chat-disclaimer">استاد ابزار خودآگاهی است، نه درمان‌گر یا مشاور مالی.</p>
+            </div>
+            <div id="coachChatDrawerBackdrop" class="coach-chat-drawer-backdrop" hidden></div>
+            <aside id="coachChatDrawer" class="coach-chat-drawer" role="dialog" aria-modal="true" aria-label="گفت‌وگوهای قبلی" aria-hidden="true">
+              <header class="coach-drawer-header">
+                <div><strong>گفت‌وگوها</strong><span>مکالمه‌های ذخیره‌شدهٔ تو</span></div>
+                <button id="coachChatDrawerClose" type="button" aria-label="بستن فهرست">×</button>
+              </header>
+              <button id="coachNewConversationDrawer" class="coach-drawer-new" type="button">＋ گفت‌وگوی جدید</button>
+              <input id="coachConversationSearch" class="coach-chat-search" type="search" maxlength="100" placeholder="جست‌وجو در گفت‌وگوها..." aria-label="جست‌وجو در گفت‌وگوها">
+              <p id="masterChatListStatus" class="coach-session-status" role="status" aria-live="polite"></p>
+              <div id="coachConversationList" class="coach-chat-list" aria-live="polite"></div>
+            </aside>
+          </section>
+
           <section id="masterView" class="master-view" hidden>
+            <header class="master-view-heading">
+              <h1>آمار و ابزارهای استاد</h1>
+              <p>گزارش‌ها، جلسه‌های ساختاریافته و تمرین‌های خودآگاهی از این بخش در دسترس‌اند.</p>
+            </header>
+            <article class="master-card coach-session-card">
+              <h2>جلسه با استاد</h2>
+              <p>جلسهٔ ساختاریافته جدا از گفت‌وگوی آزاد است؛ استاد پنج سؤال از ژورنال و جلسه‌های قبلی می‌پرسد و در پایان خلاصه و تمرین را ذخیره می‌کند.</p>
+              <div class="coach-session-controls">
+                <label>سبک مربی
+                  <select id="coachStyle">
+                    <option value="supportive">آرام و حمایتی</option>
+                    <option value="direct">رک و سخت‌گیر</option>
+                  </select>
+                </label>
+                <button id="coachSessionStart" type="button">شروع جلسهٔ این هفته</button>
+              </div>
+              <p id="coachSessionStatus" class="coach-session-status" role="status" aria-live="polite"></p>
+              <div id="coachSessionHistory" class="coach-session-history"></div>
+              <div id="coachSessionLog" class="master-chat-log" aria-live="polite" hidden></div>
+              <form id="coachSessionForm" class="master-chat-form">
+                <textarea id="coachSessionInput" maxlength="3000" placeholder="پاسخت را برای ادامهٔ جلسه بنویس..."></textarea>
+                <button id="coachSessionSend" type="submit">ارسال پاسخ</button>
+              </form>
+              <button id="coachSessionFinish" class="coach-session-finish" type="button" hidden>پایان جلسه و ذخیرهٔ جمع‌بندی</button>
+              <p class="coach-session-storage-note">جلسه‌ها و گفت‌وگوهای آزاد جداگانه ذخیره می‌شوند و تا زمان حذف‌شدن انقضای خودکار ندارند؛ ماندگاری نهایی به فعال‌بودن حساب Cloudflare وابسته است.</p>
+            </article>
+            <article class="master-card coach-memory-card">
+              <h2>چیزهایی که استاد به خاطر سپرده</h2>
+              <p>استاد نکته‌های مهم و ماندگار را از چت و جلسه‌ها خودکار نگه می‌دارد و در گفت‌وگوهای جدید به کار می‌برد. لازم نیست چیزی را دستی وارد کنی. حافظه انقضای خودکار ندارد؛ ماندگاری آن به فعال‌بودن حساب و سرویس Cloudflare وابسته است.</p>
+              <details class="coach-memory-details" open>
+                <summary>نمایش حافظه</summary>
+                <p id="coachMemoryStatus" class="coach-memory-status" role="status" aria-live="polite"></p>
+                <div id="coachMemoryList" class="coach-memory-list"></div>
+              </details>
+            </article>
             <article class="master-card checkin-card">
               <h2>چک‌این قبل از شروع روز</h2>
               <p>پیش از معامله، وضعیت امروزت را ثبت کن. چراغ فقط یادآور خودآگاهی است و تضمین یا سیگنال معامله نیست.</p>
@@ -1253,28 +1430,6 @@
               <p id="lessonLibraryStatus" class="lesson-library-status" role="status" aria-live="polite"></p>
               <div id="lessonLibraryList" class="lesson-library-list"></div>
             </article>
-            <article class="master-card coach-session-card">
-              <h2>جلسه با استاد</h2>
-              <p>جلسه را با مرور سؤال‌های مشخص شروع کن؛ در پایان، خلاصه و تمرین ذخیره می‌شوند تا جلسهٔ بعد پیگیری شوند.</p>
-              <div class="coach-session-controls">
-                <label>سبک مربی
-                  <select id="coachStyle">
-                    <option value="supportive">آرام و حمایتی</option>
-                    <option value="direct">رک و سخت‌گیر</option>
-                  </select>
-                </label>
-                <button id="coachSessionStart" type="button">شروع جلسهٔ این هفته</button>
-              </div>
-              <p id="coachSessionStatus" class="coach-session-status" role="status" aria-live="polite"></p>
-              <div id="coachSessionTranscript" class="coach-session-transcript" aria-live="polite" hidden></div>
-              <form id="coachSessionReplyForm" class="coach-session-send" hidden>
-                <textarea id="coachSessionReply" placeholder="پاسخت را بنویس..."></textarea>
-                <button id="coachSessionSend" type="submit">ارسال</button>
-              </form>
-              <button id="coachSessionFinish" class="coach-session-finish" type="button" hidden>پایان جلسه و ذخیرهٔ جمع‌بندی</button>
-              <div id="coachSessionHistory" class="coach-session-history"></div>
-              <p class="coach-session-storage-note">جلسه‌ها و جمع‌بندی‌ها روی فضای ابری مشترک وب و دسکتاپ نگهداری می‌شوند و از این صفحه قابل حذف نیستند. این ژورنال برای همهٔ دارندگان کلید دسترسی مشترک قابل مشاهده است؛ حرف‌های شخصی یا رمزها را در آن ننویس.</p>
-            </article>
             <article class="master-card coach-quick-card">
               <h2>اتاق بعد از ضرر</h2>
               <p>بعد از ضرر سنگین یا دو ضرر پیاپی، پنج دقیقه مکث کن: چه شد، الان چه حسی داری و قبل از تصمیم بعدی چه کمکی لازم داری؟ استاد تصمیم معامله را برایت نمی‌گیرد.</p>
@@ -1299,22 +1454,9 @@
               <div id="afterLossResult" class="coach-quick-result" aria-live="polite" hidden></div>
               <p class="coach-quick-status">پیش از ثبت معاملهٔ باز هم همین سه پرسش به‌صورت خودکار نمایش داده می‌شود.</p>
             </article>
-            <article class="master-card">
-              <h2>چت</h2>
-              <p>برای تست اتصال، یک پیام ساده به مربی هوش مصنوعی بفرست.</p>
-            </article>
-            <article class="master-card master-chat">
-              <h2>چت با استاد</h2>
-              <p>سؤال آزاد بپرس و سؤال بعدی را به جواب قبلی وصل کن؛ استاد از معاملات ثبت‌شدهٔ ژورنال استفاده می‌کند. گفت‌وگو با بستن صفحه پاک می‌شود. عکس چارت در چت بررسی نمی‌شود و با کمتر از ۳۰ معامله نتیجهٔ آماری قطعی نمی‌دهد.</p>
-              <div id="masterChatLog" class="master-chat-log" aria-live="polite"></div>
-              <form id="masterChatForm" class="master-chat-form">
-                <textarea id="masterChatInput" maxlength="3000" placeholder="مثلاً: چرا پنج معاملهٔ آخرم ضرر شد؟"></textarea>
-                <button id="masterChatSend" type="submit">ارسال</button>
-              </form>
-            </article>
           </section>
 
-          <div class="calendar-wrap">
+          <div class="calendar-wrap" hidden>
             <section class="xh-glass panel">
               <div class="month-header">
                 <button id="prevMonthBtn" aria-label="ماه قبل">‹</button>
@@ -1531,6 +1673,6 @@
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
-    <script src="/app.js?v=telegram-mini-app"></script>
+    <script src="/app.js?v=coach-chat-v4"></script>
   </body>
 </html>
