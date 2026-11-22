@@ -1,6 +1,14 @@
 const STORAGE_KEY = 'xayno-local-journal';
 const CHECKIN_STORAGE_KEY = 'xayno-daily-checkins-v1';
 const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
+const TRADING_PROFILE_STORAGE_KEY = 'xayno-trading-profile-v1';
+const TRADING_PROFILE_CATEGORIES = [
+  ['triggers', 'محرک‌های احساسی'],
+  ['moneyBeliefs', 'باورهای احتمالی دربارهٔ پول'],
+  ['strengths', 'نقاط قوت'],
+  ['growthAreas', 'زمینه‌های قابل‌تقویت'],
+  ['biases', 'سوگیری‌ها با نمونه از معامله‌های تو'],
+];
 function localDateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -51,6 +59,12 @@ const afterLossFields = document.getElementById('afterLossFields');
 const afterLossStatus = document.getElementById('afterLossStatus');
 const afterLossResult = document.getElementById('afterLossResult');
 const afterLossStreak = document.getElementById('afterLossStreak');
+const tradingProfileGenerateButton = document.getElementById('tradingProfileGenerateBtn');
+const tradingProfileEditButton = document.getElementById('tradingProfileEditBtn');
+const tradingProfileSaveButton = document.getElementById('tradingProfileSaveBtn');
+const tradingProfileDeleteButton = document.getElementById('tradingProfileDeleteBtn');
+const tradingProfileStatus = document.getElementById('tradingProfileStatus');
+const tradingProfileResult = document.getElementById('tradingProfileResult');
 const preTradeCheck = document.getElementById('preTradeCheck');
 const preTradeWhy = document.getElementById('preTradeWhy');
 const preTradeStop = document.getElementById('preTradeStop');
@@ -76,6 +90,9 @@ let coachingSessions = [];
 let activeCoachingSession = null;
 let activeCoachingQuestion = 0;
 let coachSessionBusy = false;
+let tradingProfile = null;
+let tradingProfileEditing = false;
+let tradingProfileBusy = false;
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
 let journalChartOverlayState = new Map();
@@ -1902,6 +1919,144 @@ function renderCheckinHistory() {
     : '<div class="overview-empty">هنوز چک‌این روزانه‌ای ثبت نشده است.</div>';
 }
 
+function renderTradingProfile() {
+  if (!tradingProfileResult) return;
+  tradingProfileResult.replaceChildren();
+  const hasProfile = Boolean(tradingProfile);
+  tradingProfileEditButton.hidden = !hasProfile || tradingProfileEditing;
+  tradingProfileSaveButton.hidden = !hasProfile || !tradingProfileEditing;
+  tradingProfileDeleteButton.hidden = !hasProfile || tradingProfileEditing || !tradingProfileSaved;
+  tradingProfileGenerateButton.disabled = tradingProfileBusy;
+  tradingProfileGenerateButton.textContent = tradingProfileBusy ? 'در حال ساخت نقشه...' : hasProfile ? 'ساخت دوبارهٔ نقشه' : 'ساخت نقشهٔ شخصیت';
+  if (!hasProfile) {
+    const empty = document.createElement('p');
+    empty.className = 'overview-empty';
+    empty.textContent = 'هنوز نقشه‌ای ساخته نشده است. ابتدا داده‌های ژورنال و جلسه‌های ذخیره‌شده بررسی می‌شوند.';
+    tradingProfileResult.appendChild(empty);
+    return;
+  }
+
+  const meta = document.createElement('p');
+  meta.className = 'trading-profile-meta';
+  const generatedAt = tradingProfile.generatedAt ? new Date(tradingProfile.generatedAt).toLocaleString('fa-IR') : '';
+  meta.textContent = `${tradingProfile.tradeCount ?? 0} معامله و ${tradingProfile.sessionCount ?? 0} جلسه · ${generatedAt}${tradingProfileSaved ? ' · ذخیره‌شده فقط روی این دستگاه' : ' · پیش‌نویس؛ هنوز ذخیره نشده'}`;
+  tradingProfileResult.appendChild(meta);
+  if (tradingProfile.notice) {
+    const notice = document.createElement('p');
+    notice.className = 'trading-profile-notice';
+    notice.textContent = tradingProfile.notice;
+    tradingProfileResult.appendChild(notice);
+  }
+  for (const [key, title] of TRADING_PROFILE_CATEGORIES) {
+    const section = document.createElement('section');
+    section.className = 'trading-profile-category';
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    section.appendChild(heading);
+    const items = Array.isArray(tradingProfile[key]) ? tradingProfile[key] : [];
+    if (tradingProfileEditing) {
+      const field = document.createElement('textarea');
+      field.dataset.profileCategory = key;
+      field.rows = Math.max(3, Math.min(7, items.length + 1));
+      field.maxLength = 4000;
+      field.value = items.join('\n');
+      field.setAttribute('aria-label', `${title}؛ هر مورد را در یک خط بنویس`);
+      field.placeholder = 'هر مورد را در یک خط بنویس؛ اگر موردی نیست خالی بگذار.';
+      section.appendChild(field);
+    } else if (items.length) {
+      const list = document.createElement('ul');
+      for (const item of items) {
+        const row = document.createElement('li');
+        row.textContent = item;
+        list.appendChild(row);
+      }
+      section.appendChild(list);
+    } else {
+      const empty = document.createElement('p');
+      empty.textContent = 'برای این بخش شاهد کافی پیدا نشد.';
+      section.appendChild(empty);
+    }
+    tradingProfileResult.appendChild(section);
+  }
+}
+
+let tradingProfileSaved = false;
+
+function loadTradingProfile() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRADING_PROFILE_STORAGE_KEY) || 'null');
+    if (saved && TRADING_PROFILE_CATEGORIES.every(([key]) => Array.isArray(saved[key]))) {
+      tradingProfile = saved;
+      tradingProfileSaved = true;
+    }
+  } catch (error) {
+    tradingProfileStatus.textContent = 'خواندن نقشهٔ ذخیره‌شده ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
+  }
+  renderTradingProfile();
+}
+
+tradingProfileGenerateButton?.addEventListener('click', async () => {
+  if (tradingProfileBusy) return;
+  tradingProfileBusy = true;
+  tradingProfileStatus.textContent = 'در حال بررسی یادداشت‌های معامله و خلاصهٔ جلسه‌ها...';
+  renderTradingProfile();
+  try {
+    const response = await apiFetch('/api/coach/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'ساخت نقشه ناموفق بود.');
+    tradingProfile = {
+      ...payload.profile,
+      tradeCount: payload.tradeCount,
+      sessionCount: payload.sessionCount,
+      generatedAt: payload.generatedAt,
+    };
+    tradingProfileSaved = false;
+    tradingProfileEditing = true;
+    tradingProfileStatus.textContent = 'این فقط یک پیشنهاد است؛ موارد را بازبینی یا ویرایش کن و بعد ذخیره را بزن.';
+  } catch (error) {
+    tradingProfileStatus.textContent = error.message || 'ساخت نقشه ناموفق بود.';
+  } finally {
+    tradingProfileBusy = false;
+    renderTradingProfile();
+  }
+});
+
+tradingProfileEditButton?.addEventListener('click', () => {
+  tradingProfileEditing = true;
+  tradingProfileStatus.textContent = 'هر مورد را در یک خط ویرایش کن؛ تغییرات تا زمان ذخیره فقط در این صفحه هستند.';
+  renderTradingProfile();
+});
+
+tradingProfileSaveButton?.addEventListener('click', () => {
+  if (!tradingProfile) return;
+  for (const [key] of TRADING_PROFILE_CATEGORIES) {
+    const field = tradingProfileResult.querySelector(`[data-profile-category="${key}"]`);
+    tradingProfile[key] = field.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).slice(0, 5);
+  }
+  try {
+    localStorage.setItem(TRADING_PROFILE_STORAGE_KEY, JSON.stringify(tradingProfile));
+    tradingProfileSaved = true;
+    tradingProfileEditing = false;
+    tradingProfileStatus.textContent = 'نقشهٔ تأییدشده فقط روی همین مرورگر ذخیره شد و با فضای ابری همگام نیست.';
+  } catch (error) {
+    tradingProfileStatus.textContent = 'ذخیرهٔ نقشه ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن. تغییرات فعلی هنوز روی صفحه هستند.';
+  }
+  renderTradingProfile();
+});
+
+tradingProfileDeleteButton?.addEventListener('click', () => {
+  try {
+    localStorage.removeItem(TRADING_PROFILE_STORAGE_KEY);
+    tradingProfile = null;
+    tradingProfileSaved = false;
+    tradingProfileEditing = false;
+    tradingProfileStatus.textContent = 'نقشهٔ ذخیره‌شده از همین مرورگر پاک شد.';
+    renderTradingProfile();
+  } catch (error) {
+    tradingProfileStatus.textContent = 'پاک‌کردن نقشه ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
+  }
+});
+
 function coachSessionDate(value) {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString('fa-IR') : 'تاریخ نامشخص';
@@ -2299,6 +2454,7 @@ async function hydrateApp() {
     state.dailyCheckins = [];
     checkinLocalNote.textContent = 'خواندن چک‌این‌های قبلی ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
   }
+  loadTradingProfile();
   const pendingLocalTrades = readLocalTrades();
   const serverTrades = await fetchServerTrades();
   if (Array.isArray(serverTrades) && (serverTrades.length || state.remoteEnabled)) {

@@ -705,6 +705,102 @@ function getCoachJournalContext(trades, sessions) {
   }).slice(0, 120_000);
 }
 
+function getCoachProfileContext(trades, sessions) {
+  const recentTrades = [...trades]
+    .sort((left, right) => String(right.journalDate || right.openedAt || '').localeCompare(String(left.journalDate || left.openedAt || '')))
+    .slice(0, 100)
+    .map((trade) => ({
+      id: String(trade.id || '').slice(0, 80),
+      token: String(trade.token || '').slice(0, 100),
+      date: String(trade.journalDate || trade.openedAt || '').slice(0, 40),
+      status: String(trade.status || '').slice(0, 20),
+      result: trade.status === 'closed' ? tradePnl(trade) : null,
+      emotion: String(trade.emotion || '').slice(0, 500),
+      mistakes: String(trade.mistakes || '').slice(0, 700),
+      lesson: String(trade.lesson || '').slice(0, 700),
+      entryReason: String(trade.entryReason || '').slice(0, 700),
+      exitReason: String(trade.exitReason || '').slice(0, 700),
+      setup: String(trade.setup || '').slice(0, 200),
+      riskLevel: String(trade.riskLevel || '').slice(0, 40),
+      entryMarketCap: trade.entryMarketCap ?? null,
+      exitMarketCap: trade.exitMarketCap ?? null,
+      notes: String(trade.notes || '').slice(0, 700),
+    }));
+  const recentSessions = sessions.slice(0, 12).map((session) => ({
+    date: session.createdAt,
+    status: session.status,
+    summary: String(session.summary || '').slice(0, 1200),
+    insight: String(session.insight || '').slice(0, 800),
+    commitments: Array.isArray(session.commitments) ? session.commitments.slice(0, 5) : [],
+    homework: String(session.homework || '').slice(0, 800),
+  }));
+  return JSON.stringify({
+    tradeCount: trades.length,
+    includedTradeCount: recentTrades.length,
+    sessionCount: sessions.length,
+    recentTrades,
+    recentSessions,
+  }).slice(0, 100_000);
+}
+
+app.post('/api/coach/profile', requireJournalAccess, async (_req, res) => {
+  if (!AI_CHAT_API_KEY) return res.status(503).json({ message: 'برای ساخت نقشهٔ شخصیت، اتصال هوش مصنوعی چت را در تنظیمات سرور فعال کن.' });
+
+  let sessions;
+  try {
+    sessions = await readCoachingSessions();
+  } catch (error) {
+    console.error('Coach profile session context read failed:', error.message);
+    return res.status(503).json({ message: 'خواندن خلاصهٔ جلسه‌ها انجام نشد؛ اتصال ذخیره‌سازی جلسه‌ها را بررسی کن.' });
+  }
+
+  const trades = readTrades();
+  const context = getCoachProfileContext(trades, sessions);
+  try {
+    const profile = await requestCoachJson([
+      {
+        role: 'system',
+        content: [
+          'تو مربی خودآگاهی ترید هستی، نه درمان‌گر و نه تشخیص‌دهندهٔ شخصیت.',
+          'از یادداشت‌های ژورنال و خلاصهٔ جلسه‌ها فقط فرضیه‌های قابل‌بازبینی بساز؛ هرگز ویژگی شخصیتی یا باور پولی را واقعیت قطعی جا نزن.',
+          'هر مورد باید به نمونهٔ مشخصی از داده‌های ارائه‌شده اشاره کند؛ چیزی را حدس نزن و اگر شاهدی نیست، آرایه را خالی بگذار.',
+          'در biases نام سوگیری را ساده توضیح بده و با نمونهٔ مشخص از معامله یا جلسهٔ خود کاربر نشان بده؛ آموزش کلی و بی‌مثال نده.',
+          'از توصیهٔ ورود و خروج، تشخیص روان‌شناختی، سرزنش یا القای وابستگی پرهیز کن.',
+          'اگر تعداد معامله‌ها کمتر از ۳۰ است، عبارت «داده هنوز کمه» را در notice بیاور و همهٔ برداشت‌ها را صریحاً اولیه و نامطمئن معرفی کن؛ آمار قطعی نساز.',
+          'فقط JSON معتبر با کلیدهای notice, triggers, moneyBeliefs, strengths, growthAreas, biases برگردان. notice یک رشتهٔ فارسی و هر دسته آرایه‌ای با حداکثر ۵ رشتهٔ فارسی باشد. هر رشته حداکثر ۷۰۰ نویسه باشد.',
+        ].join(' '),
+      },
+      { role: 'user', content: `داده‌های محدودشدهٔ ژورنال و جلسه‌ها:\n${context}` },
+    ]);
+    const categories = ['triggers', 'moneyBeliefs', 'strengths', 'growthAreas', 'biases'];
+    if (typeof profile.notice !== 'string'
+      || categories.some((key) => !Array.isArray(profile[key]) || profile[key].length > 5
+        || profile[key].some((item) => typeof item !== 'string' || !item.trim() || item.length > 700))) {
+      return res.status(502).json({ message: 'نقشهٔ شخصیت با قالب معتبر ساخته نشد؛ دوباره تلاش کن.' });
+    }
+    const notice = profile.notice.slice(0, 1000);
+    const sampleNotice = trades.length < 30
+      ? 'داده هنوز کمه؛ همهٔ موارد این نقشه فقط فرضیه‌های اولیه و نامطمئن هستند، نه نتیجهٔ آماری.'
+      : notice;
+    return res.json({
+      profile: {
+        notice: sampleNotice,
+        triggers: profile.triggers,
+        moneyBeliefs: profile.moneyBeliefs,
+        strengths: profile.strengths,
+        growthAreas: profile.growthAreas,
+        biases: profile.biases,
+      },
+      tradeCount: trades.length,
+      sessionCount: sessions.length,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Coach profile generation failed:', error.message);
+    return res.status(502).json({ message: 'ساخت نقشهٔ شخصیت با هوش مصنوعی ناموفق بود؛ تنظیمات API چت را بررسی کن.' });
+  }
+});
+
 app.get('/api/coach/sessions', requireJournalAccess, async (_req, res) => {
   try {
     const sessions = await readCoachingSessions();
