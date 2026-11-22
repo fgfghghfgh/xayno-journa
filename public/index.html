@@ -363,6 +363,23 @@
       .master-report-status { color: var(--text-dim); font-size: 11px; }
       .master-report-result { margin-top: 14px; padding: 14px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(3,8,12,.38); color: var(--text-muted); font-size: 12px; line-height: 2; white-space: pre-wrap; }
       .master-report-result:empty { display: none; }
+      .commitments-card { grid-column: 1 / -1; }
+      .commitment-score-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+      .commitment-score { padding: 12px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(3,8,12,.3); }
+      .commitment-score span, .commitment-score strong { display: block; }
+      .commitment-score span { color: var(--text-dim); font-size: 10px; }
+      .commitment-score strong { margin-top: 5px; font-size: 18px; }
+      .commitment-list { display: grid; gap: 8px; margin-top: 12px; }
+      .commitment-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(3,8,12,.25); }
+      .commitment-item > div { min-width: 0; }
+      .commitment-item strong { display: block; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+      .commitment-item span { color: var(--text-dim); font-size: 10px; }
+      .commitment-item-controls { display: flex; flex: 0 0 auto; gap: 7px; }
+      .commitment-item select, .commitment-item button { min-height: 36px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 10px; font: inherit; font-size: 10px; }
+      .commitment-item select { max-width: 180px; }
+      .commitment-item button { border-color: rgba(0,245,160,.2); background: rgba(0,245,160,.07); color: var(--green); cursor: pointer; }
+      .commitment-item button:disabled, .commitment-item select:disabled { opacity: .55; cursor: wait; }
+      @media (max-width: 640px) { .commitment-score-grid { grid-template-columns: 1fr; } .commitment-item { flex-direction: column; } .commitment-item-controls { width: 100%; } .commitment-item select { flex: 1; max-width: none; } }
       .trading-profile-card { grid-column: 1 / -1; }
       .trading-profile-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
       .trading-profile-actions button { min-height: 38px; border: 1px solid rgba(0,245,160,.2); border-radius: 9px; background: rgba(0,245,160,.08); color: var(--green); padding: 0 13px; font-weight: 750; cursor: pointer; }
@@ -408,6 +425,10 @@
       .lesson-review-panel button:disabled { opacity: .55; cursor: not-allowed; }
       .lesson-review-list { display: grid; gap: 5px; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
       .lesson-review-list p { margin: 0; }
+      .lesson-adherence-list { display: grid; gap: 8px; }
+      .lesson-adherence-item { display: grid; gap: 4px; padding: 10px; border: 1px solid rgba(255,255,255,.07); border-radius: 9px; background: rgba(3,8,12,.2); }
+      .lesson-adherence-item > p { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.8; white-space: pre-wrap; }
+      .lesson-adherence-item > strong { color: var(--text); font-size: 11px; }
       .monthly-comparison-controls { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
       .monthly-comparison-controls label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
       .monthly-comparison-controls input { min-height: 38px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 9px; color-scheme: dark; }
@@ -1564,9 +1585,9 @@
               <section class="coach-followup-control" aria-label="پیگیری خودکار استاد">
                 <label for="coachProactiveFollowup">
                   <input id="coachProactiveFollowup" type="checkbox">
-                  <span>اجازه بده استاد برای پیگیری مهم، در تلگرام پیام بدهد</span>
+                  <span>اجازه بده استاد خودش گفتگو را در تلگرام شروع کند</span>
                 </label>
-                <p>برای تشخیص نیاز، پیام‌ها و زمینهٔ ژورنال با هوش مصنوعی بررسی می‌شوند. فقط پیگیری مهم به تلگرام می‌آید؛ بررسی ساعتی است و هر وقت بخواهی خاموشش کن.</p>
+                <p>استاد می‌تواند خودش در تلگرام پیام بدهد و همان‌جا به پاسخت جواب دهد. ژورنال را هم هنگام ثبت یا بستن معامله بررسی می‌کند؛ در صورت نیاز پیگیری می‌کند، وگرنه سکوت می‌کند. خاموش‌کردن این گزینه پیام‌های خودکار را متوقف می‌کند.</p>
                 <p id="coachProactiveStatus" class="coach-followup-status" role="status" aria-live="polite"></p>
               </section>
               <input id="coachConversationSearch" class="coach-chat-search" type="search" maxlength="100" placeholder="جست‌وجو در گفت‌وگوها..." aria-label="جست‌وجو در گفت‌وگوها">
@@ -1628,6 +1649,13 @@
               <div id="checkinFeedback" class="checkin-feedback" role="status" aria-live="polite" hidden></div>
               <div id="checkinHistory" class="checkin-history"></div>
               <p id="checkinLocalNote" class="checkin-local-note">پاسخ‌ها فقط در همین مرورگر و دستگاه ذخیره می‌شوند و با فضای ابری همگام نیستند.</p>
+            </article>
+            <article class="master-card commitments-card">
+              <h2>تکالیف من و اعتماد به خود</h2>
+              <p>فقط قول‌ها و تمرین‌هایی شمرده می‌شوند که خودت پذیرفته‌ای. پیشنهادهای نپذیرفته‌شده وارد امتیاز نمی‌شوند؛ هر مورد را پس از انجام، خودت علامت بزن.</p>
+              <div id="coachCommitmentStatus" class="master-report-status" role="status" aria-live="polite"></div>
+              <div id="coachCommitmentScores" class="commitment-score-grid"></div>
+              <div id="coachCommitmentList" class="commitment-list"></div>
             </article>
             <article class="master-card master-report">
               <h2>گزارش هفتگی استاد</h2>
@@ -1703,6 +1731,9 @@
                 <p id="lessonReviewStatus" class="lesson-library-status" role="status" aria-live="polite"></p>
                 <button id="lessonReviewStart" type="button" disabled>هنوز نکته‌ای موعد مرورش نرسیده</button>
                 <div id="lessonReviewList" class="lesson-review-list"></div>
+                <h3>پیشرفت رعایت</h3>
+                <p id="lessonAdherenceStatus" class="lesson-library-status" role="status" aria-live="polite"></p>
+                <div id="lessonAdherenceList" class="lesson-adherence-list"></div>
               </section>
             </article>
             <article class="master-card coach-quick-card">
@@ -1948,6 +1979,7 @@
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
+    <script src="/lesson-progress.js?v=lesson-progress-v1"></script>
     <script src="/app.js?v=coach-ai-savings-v1"></script>
   </body>
 </html>

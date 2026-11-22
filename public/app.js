@@ -79,6 +79,9 @@ const masterChatSend = document.getElementById('masterChatSend');
 const masterReportButton = document.getElementById('masterReportBtn');
 const masterReportStatus = document.getElementById('masterReportStatus');
 const masterReportResult = document.getElementById('masterReportResult');
+const coachCommitmentStatus = document.getElementById('coachCommitmentStatus');
+const coachCommitmentScores = document.getElementById('coachCommitmentScores');
+const coachCommitmentList = document.getElementById('coachCommitmentList');
 const weeklyCoachReportStatus = document.getElementById('weeklyCoachReportStatus');
 const weeklyCoachReportResult = document.getElementById('weeklyCoachReportResult');
 let weeklyCoachReportBusy = false;
@@ -133,6 +136,8 @@ const lessonLibraryList = document.getElementById('lessonLibraryList');
 const lessonReviewStatus = document.getElementById('lessonReviewStatus');
 const lessonReviewList = document.getElementById('lessonReviewList');
 const lessonReviewStartButton = document.getElementById('lessonReviewStart');
+const lessonAdherenceStatus = document.getElementById('lessonAdherenceStatus');
+const lessonAdherenceList = document.getElementById('lessonAdherenceList');
 const preTradeCheck = document.getElementById('preTradeCheck');
 const preTradeWhy = document.getElementById('preTradeWhy');
 const preTradeStop = document.getElementById('preTradeStop');
@@ -1649,6 +1654,7 @@ function setJournalView(view) {
     renderDailyCheckin();
     renderAfterLossStreak();
     loadWeeklyCoachReport();
+    loadCoachCommitments();
   }
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
@@ -3005,6 +3011,68 @@ function renderLessonReviews() {
       lessonReviewList.appendChild(item);
     }
   }
+  renderLessonAdherenceProgress();
+}
+
+function renderLessonAdherenceProgress() {
+  if (!lessonAdherenceStatus || !lessonAdherenceList) return;
+  lessonAdherenceList.replaceChildren();
+  const summaries = window.summarizeLessonAdherence(lessonLibrary, lessonReviews);
+  lessonAdherenceStatus.textContent = state.trades.length < 30
+    ? `کمتر از ۳۰ معامله ثبت شده؛ این‌ها نمونه‌های واقعی‌اند، نه نتیجه‌گیری آماری قطعی.`
+    : 'این گزارش توصیفی است و بر نمونه‌های واقعی پیوندخورده به هر نکته تکیه دارد.';
+  if (!summaries.length) {
+    const empty = document.createElement('p');
+    empty.textContent = 'برای گزارش پیشرفت، ابتدا نکته‌ای به کتابخانه اضافه کن.';
+    lessonAdherenceList.appendChild(empty);
+    return;
+  }
+  const statusLabels = {
+    improving: 'در سه معاملهٔ اخیر، رعایت بیشتر ثبت شده',
+    needs_practice: 'این نکته هنوز نیاز به تمرین دارد',
+    observed_adherence: 'رعایت در نمونه‌های ثبت‌شده دیده می‌شود',
+    mixed: 'نمونه‌ها ترکیبی‌اند؛ هنوز روند روشنی نیست',
+    insufficient: 'شواهد هنوز کم است',
+  };
+  for (const summary of summaries) {
+    const item = document.createElement('article');
+    item.className = 'lesson-adherence-item';
+    const heading = document.createElement('strong');
+    heading.textContent = summary.book || 'نکتهٔ بدون عنوان';
+    const note = document.createElement('p');
+    note.textContent = summary.text;
+    const tally = document.createElement('p');
+    tally.className = 'lesson-review-meta';
+    tally.textContent = `نمونه‌های پیوندخورده: ${summary.followed} رعایت‌شده، ${summary.notFollowed} نیازمند تمرین، ${summary.unclear} نامشخص · ${statusLabels[summary.status]}`;
+    item.append(heading, note, tally);
+    if (summary.trend) {
+      const trend = document.createElement('p');
+      trend.className = 'lesson-review-meta';
+      trend.textContent = `مقایسهٔ توصیفی: ${summary.trend.recentFollowed} از ۳ در سه نمونهٔ اخیر، در برابر ${summary.trend.previousFollowed} از ۳ در سه نمونهٔ پیشین.`;
+      item.appendChild(trend);
+    }
+    if (!summary.examples.length) {
+      const empty = document.createElement('p');
+      empty.textContent = 'هنوز معامله‌ای با شاهد مشخص به این نکته پیوند نخورده است.';
+      item.appendChild(empty);
+    } else {
+      const examples = document.createElement('div');
+      examples.className = 'lesson-trade-links';
+      for (const example of summary.examples) {
+        const evidence = document.createElement('p');
+        const tradeStatus = example.status === 'followed'
+          ? 'رعایت‌شده'
+          : example.status === 'not_followed' ? 'رعایت‌نشده' : 'نامشخص';
+        const date = example.tradeDate
+          ? new Date(example.tradeDate).toLocaleDateString('fa-IR')
+          : 'تاریخ ثبت نشده';
+        evidence.textContent = `${date} · ${example.token} · ${tradeStatus}${example.evidence ? ` · ${example.evidence}` : ''}`;
+        examples.appendChild(evidence);
+      }
+      item.appendChild(examples);
+    }
+    lessonAdherenceList.appendChild(item);
+  }
 }
 
 function loadLessonLibrary() {
@@ -3268,11 +3336,32 @@ async function loadCoachProactiveFollowup() {
       throw new Error(payload.message || 'خواندن تنظیم پیگیری استاد ناموفق بود.');
     }
     coachProactiveFollowup.checked = payload.enabled;
-    coachProactiveStatus.textContent = payload.enabled
-      ? 'پیگیری مهم فعال است؛ بررسی ساعتی انجام می‌شود.'
-      : 'پیگیری خودکار خاموش است.';
+    if (payload.enabled) {
+      await ensureCoachTelegramWebhook();
+      coachProactiveStatus.textContent = 'استاد می‌تواند در تلگرام آغازگر گفتگو باشد و هنگام ثبت یا بستن معامله نیز بررسی کند.';
+    } else {
+      coachProactiveStatus.textContent = 'پیام خودکار و پاسخ مستقیم تلگرام خاموش است.';
+    }
   } finally {
     coachProactiveFollowup.disabled = false;
+  }
+}
+
+async function ensureCoachTelegramWebhook() {
+  const statusResponse = await apiFetch('/api/coach/telegram-webhook');
+  const status = await statusResponse.json().catch(() => ({}));
+  if (!statusResponse.ok) throw new Error(status.message || 'خواندن وضعیت اتصال گفت‌وگوی تلگرام ناموفق بود.');
+  if (status.configured) return;
+  const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)),
+    (byte) => byte.toString(16).padStart(2, '0')).join('');
+  const response = await apiFetch('/api/coach/telegram-webhook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.configured !== true) {
+    throw new Error(payload.message || 'وصل‌کردن پاسخ مستقیم تلگرام ناموفق بود.');
   }
 }
 
@@ -3281,6 +3370,7 @@ coachProactiveFollowup?.addEventListener('change', async () => {
   coachProactiveFollowup.disabled = true;
   coachProactiveStatus.textContent = enabled ? 'در حال فعال‌کردن پیگیری تلگرام...' : 'در حال خاموش‌کردن پیگیری...';
   try {
+    if (enabled) await ensureCoachTelegramWebhook();
     const response = await apiFetch('/api/coach/followups', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3291,7 +3381,7 @@ coachProactiveFollowup?.addEventListener('change', async () => {
       throw new Error(payload.message || 'ذخیرهٔ تنظیم پیگیری استاد ناموفق بود.');
     }
     coachProactiveStatus.textContent = enabled
-      ? 'پیگیری مهم فعال شد؛ بررسی ساعتی انجام می‌شود. هر زمان بخواهی می‌توانی خاموشش کنی.'
+      ? 'استاد می‌تواند در تلگرام آغازگر گفتگو باشد و مستقیم پاسخ بدهد؛ هنگام رویدادهای معامله نیز بررسی می‌کند.'
       : 'پیگیری خودکار خاموش شد.';
   } catch (error) {
     coachProactiveFollowup.checked = !enabled;
@@ -3689,6 +3779,96 @@ async function loadCoachSessions() {
   if (activeCoachingSession) document.getElementById('coachStyle').value = activeCoachingSession.style;
   renderCoachSessionHistory();
   renderCoachSessionTranscript();
+}
+
+async function loadCoachCommitments() {
+  if (!coachCommitmentStatus || !coachCommitmentScores || !coachCommitmentList) return;
+  coachCommitmentStatus.textContent = 'در حال خواندن قول‌ها و تکالیف پذیرفته‌شده...';
+  try {
+    const response = await apiFetch('/api/coach/commitments');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'خواندن تکالیف ناموفق بود.');
+    renderCoachCommitments(payload);
+    coachCommitmentStatus.textContent = '';
+  } catch (error) {
+    coachCommitmentStatus.textContent = error.message || 'خواندن تکالیف ناموفق بود.';
+  }
+}
+
+function renderCoachCommitments(payload) {
+  const scoreMarkup = (label, score) => `
+    <div class="commitment-score">
+      <span>${label}</span>
+      <strong>${score.score === null ? 'هنوز داده‌ای نیست' : `${score.score}%`}</strong>
+      <span>${score.completed} انجام‌شده از ${score.total} مورد پذیرفته‌شده</span>
+    </div>`;
+  coachCommitmentScores.innerHTML = scoreMarkup('کل دوره', payload.allTime)
+    + scoreMarkup('۳۰ روز اخیر', payload.last30Days);
+  coachCommitmentList.replaceChildren();
+  if (!payload.tasks?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'overview-empty';
+    empty.textContent = 'هنوز قول یا تکلیف پذیرفته‌شده‌ای ثبت نشده است.';
+    coachCommitmentList.appendChild(empty);
+    return;
+  }
+  const statuses = {
+    pending: 'بعداً پیگیری شود',
+    completed: 'انجام‌شده',
+    blocked: 'مانع دارم',
+    cancelled: 'لغو',
+  };
+  payload.tasks.forEach((task) => {
+    const item = document.createElement('article');
+    item.className = 'commitment-item';
+    const details = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = task.text;
+    const meta = document.createElement('span');
+    const timestamp = Date.parse(task.createdAt || '');
+    const date = Number.isFinite(timestamp) ? new Date(timestamp).toLocaleDateString('fa-IR') : 'تاریخ نامشخص';
+    meta.textContent = `${date} · ${statuses[task.status] || 'بعداً پیگیری شود'}`;
+    details.append(title, meta);
+    item.appendChild(details);
+    const controls = document.createElement('div');
+    controls.className = 'commitment-item-controls';
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', `وضعیت تکلیف: ${task.text}`);
+    Object.entries(statuses).forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      select.appendChild(option);
+    });
+    select.value = Object.hasOwn(statuses, task.status) ? task.status : 'pending';
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = 'ذخیرهٔ وضعیت';
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      select.disabled = true;
+      try {
+        const response = await apiFetch(`/api/coach/commitments/${encodeURIComponent(task.sessionId)}/${encodeURIComponent(task.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: select.value }),
+        });
+        const updated = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(updated.message || 'به‌روزرسانی تکلیف ناموفق بود.');
+        renderCoachCommitments(updated);
+        coachCommitmentStatus.textContent = select.value === 'pending'
+          ? 'وضعیت ذخیره شد؛ استاد برای پیگیری بعدی یادآوری می‌کند.'
+          : 'وضعیت تکلیف ذخیره شد.';
+      } catch (error) {
+        coachCommitmentStatus.textContent = error.message || 'به‌روزرسانی تکلیف ناموفق بود.';
+        save.disabled = false;
+        select.disabled = false;
+      }
+    });
+    controls.append(select, save);
+    item.appendChild(controls);
+    coachCommitmentList.appendChild(item);
+  });
 }
 
 function renderCoachSessionHistory() {

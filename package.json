@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test:telegram": "node --test cloudflare/telegram-auth.test.mjs cloudflare/gemini-interactions.test.mjs cloudflare/coach-trade-feedback.test.mjs cloudflare/coach-followups.test.mjs cloudflare/coach-memory.test.mjs cloudflare/coach-pattern-evidence.test.mjs cloudflare/coach-urgent-entry.test.mjs cloudflare/coach-weekly-report.test.mjs cloudflare/coach-chat-context.test.mjs cloudflare/coach-daily-lesson.test.mjs cloudflare/coach-lesson-review.test.mjs cloudflare/coach-lesson-improvement.test.mjs"
+    "test:telegram": "node --test cloudflare/telegram-auth.test.mjs cloudflare/telegram-coach.test.mjs cloudflare/gemini-interactions.test.mjs cloudflare/coach-trade-feedback.test.mjs cloudflare/coach-followups.test.mjs cloudflare/coach-memory.test.mjs cloudflare/coach-pattern-evidence.test.mjs cloudflare/coach-urgent-entry.test.mjs cloudflare/coach-weekly-report.test.mjs cloudflare/coach-chat-context.test.mjs cloudflare/coach-daily-lesson.test.mjs cloudflare/coach-lesson-review.test.mjs cloudflare/coach-lesson-improvement.test.mjs cloudflare/coach-lesson-progress.test.mjs cloudflare/coach-autonomy.test.mjs cloudflare/coach-commitments.test.mjs cloudflare/coach-socratic.test.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
