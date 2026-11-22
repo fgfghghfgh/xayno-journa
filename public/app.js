@@ -88,8 +88,7 @@ const preTradeResult = document.getElementById('preTradeResult');
 let preTradeReviewComplete = false;
 let preTradeFromForm = false;
 let preTradeReviewBusy = false;
-let postTradeReviewComplete = false;
-let pendingPostTradeRuleChecks = [];
+let pendingPostTradeReviewId = '';
 let afterLossReviewBusy = false;
 const dailyCheckinForm = document.getElementById('dailyCheckinForm');
 const checkinFeedback = document.getElementById('checkinFeedback');
@@ -1582,8 +1581,6 @@ function fillForm(trade) {
 function openFormForEdit(id) {
   const trade = state.trades.find((item) => item.id === id);
   if (!trade) return;
-  postTradeReviewComplete = false;
-  pendingPostTradeRuleChecks = [];
   fillForm(trade);
   openTradeForm();
 }
@@ -1592,10 +1589,7 @@ function resetForm() {
   tradeForm.reset();
   preTradeReviewComplete = false;
   preTradeFromForm = false;
-  postTradeReviewComplete = false;
-  pendingPostTradeRuleChecks = [];
   if (preTradeCheck) preTradeCheck.hidden = true;
-  if (postTradeRuleReview) postTradeRuleReview.hidden = true;
   document.getElementById('tradeId').value = '';
   document.getElementById('journalDate').value = state.selectedDate;
   state.formImages = [];
@@ -1771,7 +1765,8 @@ function renderPreTradeRuleChecks() {
   }
 }
 
-function showPostTradeRuleReview(checks) {
+function showPostTradeRuleReview(tradeId, checks) {
+  pendingPostTradeReviewId = tradeId;
   postTradeRuleList.replaceChildren();
   for (const [index, check] of checks.entries()) {
     const label = document.createElement('label');
@@ -1789,25 +1784,49 @@ function showPostTradeRuleReview(checks) {
   postTradeRuleReview.hidden = false;
 }
 
-function continuePostTradeRuleReview() {
+async function continuePostTradeRuleReview() {
   const selects = [...postTradeRuleList.querySelectorAll('select')];
   if (selects.some((select) => !select.value)) {
     postTradeRuleStatus.textContent = 'برای هر قانون یک پاسخ انتخاب کن؛ اگر مربوط نبود، «نامربوط» را بزن.';
     return;
   }
-  const existingTrade = state.trades.find((trade) => trade.id === document.getElementById('tradeId').value);
+  const existingTrade = state.trades.find((trade) => trade.id === pendingPostTradeReviewId);
   if (!existingTrade || !Array.isArray(existingTrade.personalRuleChecks)) {
-    postTradeRuleStatus.textContent = 'قوانین این معامله پیدا نشدند. فرم را نبستم و داده‌ای تغییر نکرد.';
+    postTradeRuleStatus.textContent = 'قوانین این معامله پیدا نشدند؛ اطلاعات ذخیره‌شده تغییر نکرد.';
     return;
   }
-  pendingPostTradeRuleChecks = existingTrade.personalRuleChecks.map((check, index) => ({
+  const updatedTrade = {
+    ...existingTrade,
+    personalRuleChecks: existingTrade.personalRuleChecks.map((check, index) => ({
     ...check,
     outcomeStatus: selects[index].value,
     outcomeRecordedAt: new Date().toISOString(),
-  }));
-  postTradeReviewComplete = true;
-  postTradeRuleReview.hidden = true;
-  tradeForm.requestSubmit();
+    })),
+    updatedAt: new Date().toISOString(),
+  };
+  const saveButton = document.getElementById('savePostTradeRuleReview');
+  saveButton.disabled = true;
+  postTradeRuleStatus.textContent = 'در حال ذخیرهٔ پیگیری...';
+  try {
+    const response = await apiFetch(`/api/trades/${encodeURIComponent(updatedTrade.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedTrade),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'ذخیرهٔ پیگیری ناموفق بود.');
+    state.trades = state.trades.map((trade) => trade.id === updatedTrade.id ? payload.trade : trade);
+    saveLocalTrades(state.trades);
+    postTradeRuleReview.hidden = true;
+    pendingPostTradeReviewId = '';
+    renderAll();
+    updateSyncStatus(true);
+    if (payload.trade.address) window.setTimeout(() => openTradeChart(payload.trade), 0);
+  } catch (error) {
+    postTradeRuleStatus.textContent = `${error.message}؛ پیگیری ذخیره نشد، دوباره تلاش کن.`;
+  } finally {
+    saveButton.disabled = false;
+  }
 }
 
 async function saveTrade(event) {
@@ -1844,17 +1863,17 @@ async function saveTrade(event) {
       status: select.value,
     }))
     : (existingTrade?.personalRuleChecks || []);
-  if (existingTrade?.status === 'open' && values.status === 'closed'
-    && currentRuleChecks.length && !postTradeReviewComplete) {
-    showPostTradeRuleReview(currentRuleChecks);
-    return;
-  }
+  const tradeRuleChecks = !existingTrade && values.status === 'closed' && !currentRuleChecks.length
+    ? personalRules.map((rule) => ({ ruleId: rule.id, rule: rule.rule, status: 'not-applicable' }))
+    : currentRuleChecks;
+  const shouldReviewAfterSave = values.status === 'closed'
+    && tradeRuleChecks.some((check) => !check.outcomeStatus);
 
   const submitButton = tradeForm.querySelector('button[type="submit"]');
   const nextTrade = {
     id: values.id || `trade_${Date.now()}`,
     ...values,
-    personalRuleChecks: postTradeReviewComplete ? pendingPostTradeRuleChecks : currentRuleChecks,
+    personalRuleChecks: tradeRuleChecks,
     createdAt: existingTrade?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -1881,15 +1900,21 @@ async function saveTrade(event) {
     renderAll();
     updateSyncStatus(true);
     if (existingIndex < 0) showJournalToast(payload.trade);
-    if (payload.trade.address) window.setTimeout(() => openTradeChart(payload.trade), 0);
+    if (shouldReviewAfterSave) showPostTradeRuleReview(payload.trade.id, payload.trade.personalRuleChecks);
+    else if (payload.trade.address) window.setTimeout(() => openTradeChart(payload.trade), 0);
   } catch (error) {
     saveStatus.textContent = `${error.message}؛ فعلاً داده فقط در همین دستگاه نگه داشته شد و به دستگاه دیگر نرسیده است.`;
     saveStatus.style.color = 'var(--red)';
     saveLocalTrades([nextTrade, ...state.trades.filter((trade) => trade.id !== nextTrade.id)]);
     state.trades = readLocalTrades();
+    if (shouldReviewAfterSave) {
+      tradeForm.style.display = 'none';
+      resetForm();
+    }
     renderAll();
     updateSyncStatus(false);
-    if (nextTrade.address) window.setTimeout(() => openTradeChart(nextTrade), 0);
+    if (shouldReviewAfterSave) showPostTradeRuleReview(nextTrade.id, nextTrade.personalRuleChecks);
+    else if (nextTrade.address) window.setTimeout(() => openTradeChart(nextTrade), 0);
   } finally {
     submitButton.disabled = false;
   }
@@ -2796,10 +2821,14 @@ document.getElementById('runPreTradeReview')?.addEventListener('click', reviewBe
 document.getElementById('continueAfterPreTrade')?.addEventListener('click', continueAfterPreTrade);
 document.getElementById('savePostTradeRuleReview')?.addEventListener('click', continuePostTradeRuleReview);
 document.getElementById('cancelPostTradeRuleReview')?.addEventListener('click', () => {
+  const trade = state.trades.find((item) => item.id === pendingPostTradeReviewId);
   postTradeRuleReview.hidden = true;
-  postTradeReviewComplete = false;
-  pendingPostTradeRuleChecks = [];
-  postTradeRuleStatus.textContent = 'فرم معامله باز است؛ برای ثبت، دوباره ذخیره را بزن و پیگیری را کامل کن.';
+  pendingPostTradeReviewId = '';
+  if (trade) {
+    fillForm(trade);
+    openTradeForm();
+    postTradeRuleStatus.textContent = 'معامله ذخیره شده است؛ برای ادامهٔ پیگیری، دوباره ذخیره را بزن.';
+  }
 });
 document.getElementById('cancelPreTrade')?.addEventListener('click', () => {
   preTradeCheck.hidden = true;
