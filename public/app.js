@@ -15,6 +15,9 @@ const TRADING_PROFILE_CATEGORIES = [
 ];
 const telegramWebApp = window.Telegram?.WebApp || null;
 const telegramInitData = String(telegramWebApp?.initData || '');
+const coachLaunchParams = new URLSearchParams(window.location.search);
+const coachLaunchConversationId = String(coachLaunchParams.get('coachConversation') || '');
+const coachLaunchStartsSession = coachLaunchParams.get('coachSession') === '1';
 let telegramUserId = '';
 const appStorage = {
   getItem(key) {
@@ -3197,6 +3200,30 @@ async function createCoachConversation(title = '', { preserveDraft = false } = {
   return saved;
 }
 
+async function handleCoachLaunchLink() {
+  if (!coachLaunchConversationId && !coachLaunchStartsSession) return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('coachConversation');
+  url.searchParams.delete('coachSession');
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  try {
+    let conversationId = coachLaunchConversationId;
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(conversationId)
+      || !coachConversations.some((item) => item.conversationId === conversationId)) {
+      const conversation = await createCoachConversation('جلسهٔ استاد');
+      conversationId = conversation.conversationId;
+    } else {
+      await openCoachConversation(conversationId);
+    }
+    if (coachLaunchStartsSession) {
+      masterChatInput.value = 'می‌خواهم الان یک جلسهٔ آموزشی شخصی داشته باشیم. از همان موضوع مهمی که باعث این پیگیری شد شروع کن، حرفم را با ژورنال و تمرین‌های قبلی مقایسه کن و تا رسیدن به یک تمرین روشن، جلسه را با سؤال‌های پیگیرانه ادامه بده.';
+      await handleFreeMasterChat({ preventDefault() {} });
+    }
+  } catch (error) {
+    masterChatStatus.textContent = error.message || 'بازکردن جلسهٔ استاد از پیام تلگرام ناموفق بود.';
+  }
+}
+
 async function deleteCoachConversation(conversation) {
   if (!window.confirm(`گفت‌وگوی «${conversation.title || 'بدون عنوان'}» و همهٔ پیام‌هایش برای همیشه حذف شود؟`)) return;
   const response = await apiFetch(`/api/coach/conversations/${encodeURIComponent(conversation.conversationId)}`, { method: 'DELETE' });
@@ -3288,18 +3315,6 @@ async function loadCoachMemories() {
   coachMemories = payload.memories;
   renderCoachMemories();
   coachMemoryStatus.textContent = `${coachMemories.length} نکته در حافظهٔ استاد است؛ نکته‌های تازه خودکار از مکالمه‌ها استخراج می‌شوند.`;
-}
-
-async function updateCoachMemory(messages) {
-  const response = await apiFetch('/api/coach/memories/extract', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message || 'به‌روزرسانی خودکار حافظه ناموفق بود.');
-  await loadCoachMemories();
-  coachMemoryStatus.textContent = `${payload.memoryCount || 0} نکتهٔ ماندگار در حافظهٔ استاد ذخیره شده است.`;
 }
 
 let coachConversationSearchTimer = 0;
@@ -3549,12 +3564,7 @@ async function handleCoachSessionReply(event) {
     if (!response.ok) throw new Error(payload.message || 'پاسخ مربی دریافت نشد.');
     activeCoachingSession.messages.push({ role: 'assistant', content: payload.reply });
     await saveCoachSession(activeCoachingSession);
-    try {
-      await updateCoachMemory(activeCoachingSession.messages);
-      coachSessionStatus.textContent = 'پاسخ و حافظهٔ جلسه ذخیره شدند.';
-    } catch (memoryError) {
-      coachSessionStatus.textContent = `پاسخ جلسه ذخیره شد، اما حافظه به‌روزرسانی نشد: ${memoryError.message}`;
-    }
+    coachSessionStatus.textContent = 'پاسخ و جلسه ذخیره شدند.';
   } catch (error) {
     coachSessionStatus.textContent = `${error.message || 'ادامهٔ جلسه ناموفق بود.'} پاسخ‌های ثبت‌شده در این صفحه باقی‌اند؛ اتصال را بررسی و دوباره ارسال کن.`;
     if (!coachSessionReplyInput.value.trim()) coachSessionReplyInput.value = answer;
@@ -3582,11 +3592,6 @@ async function finishCoachSession() {
     const completedSession = { ...activeCoachingSession, ...payload, status: 'completed' };
     await saveCoachSession(completedSession);
     coachSessionStatus.textContent = 'جلسه همراه با خلاصه، قول‌ها و تمرین روی فضای ابری ذخیره شد.';
-    try {
-      await updateCoachMemory(activeCoachingSession.messages);
-    } catch (memoryError) {
-      coachSessionStatus.textContent = `جلسه ذخیره شد، اما حافظه به‌روزرسانی نشد: ${memoryError.message}`;
-    }
   } catch (error) {
     coachSessionStatus.textContent = error.message || 'ذخیرهٔ جمع‌بندی جلسه ناموفق بود.';
     coachSessionFinishButton.disabled = false;
@@ -3687,13 +3692,8 @@ async function handleFreeMasterChat(event) {
   let typingIndicator = null;
   let conversationId = '';
   try {
-    const isFirstMessage = !activeConversation?.messageCount;
     if (!activeConversation) await createCoachConversation(message.slice(0, 80), { preserveDraft: true });
     conversationId = activeConversation.conversationId;
-    if (isFirstMessage && activeConversation.title === 'گفت‌وگوی جدید') {
-      activeConversation.title = message.slice(0, 80);
-      await saveCoachConversation(activeConversation);
-    }
     const nextHistory = (activeConversation?.conversationId === conversationId ? masterChatHistory : [])
       .concat([{ role: 'user', content: message }]).slice(-12);
     const userMessage = { id: newCoachId(), role: 'user', content: message };
@@ -3711,7 +3711,7 @@ async function handleFreeMasterChat(event) {
     const response = await apiFetch('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history: nextHistory }),
+      body: JSON.stringify({ message, history: nextHistory, conversationId }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || 'پاسخ هوش مصنوعی دریافت نشد.');
@@ -3735,45 +3735,12 @@ async function handleFreeMasterChat(event) {
       }
       return;
     }
-    let titleNotice = '';
-    if (isFirstMessage) {
-      const targetConversation = coachConversations.find((item) => item.conversationId === conversationId);
-      const fallbackTitle = targetConversation?.title || message.slice(0, 80);
-      try {
-        const titleResponse = await apiFetch('/api/coach/conversations/title', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userMessage: message, assistantMessage: payload.reply }),
-        });
-        const titlePayload = await titleResponse.json().catch(() => ({}));
-        if (!titleResponse.ok || !titlePayload.title) {
-          throw new Error(titlePayload.message || `ساخت عنوان ناموفق بود (HTTP ${titleResponse.status}).`);
-        }
-        if (!targetConversation) throw new Error('گفت‌وگو برای تغییر عنوان پیدا نشد.');
-        targetConversation.title = titlePayload.title;
-        await saveCoachConversation(targetConversation);
-        if (activeConversation?.conversationId === conversationId) coachChatActiveTitle.textContent = targetConversation.title;
-      } catch (error) {
-        if (targetConversation) targetConversation.title = fallbackTitle;
-        if (activeConversation?.conversationId === conversationId) coachChatActiveTitle.textContent = fallbackTitle;
-        titleNotice = `عنوان خودکار ساخته نشد: ${error.message || 'خطای نامشخص'}`;
-      }
-    }
-    try {
-      await updateCoachMemory(conversationHistory);
-      if (activeConversation?.conversationId === conversationId) {
-        masterChatStatus.textContent = `گفت‌وگو ذخیره شد؛ حافظهٔ استاد هم خودکار به‌روزرسانی شد.${titleNotice ? ` ${titleNotice}` : ''}`;
-      }
-    } catch (memoryError) {
-      if (activeConversation?.conversationId === conversationId) {
-        masterChatStatus.textContent = `گفت‌وگو ذخیره شد، اما حافظه به‌روزرسانی نشد: ${memoryError.message}${titleNotice ? ` ${titleNotice}` : ''}`;
-      }
-    }
     if (Number.isFinite(payload.tradeCount) && activeConversation?.conversationId === conversationId) {
-      const contextNote = payload.omittedTradeCount
-        ? `زمینهٔ پاسخ: ${payload.includedTradeCount} از ${payload.tradeCount} معامله؛ تعدادی از معاملات قدیمی‌تر به محدودیت حجم پیام نرسیدند.`
-        : `زمینهٔ پاسخ: ${payload.includedTradeCount} معاملهٔ ثبت‌شده.`;
+      const contextNote = `زمینهٔ پاسخ: ${payload.includedTradeCount} معاملهٔ اخیر از مجموع ${payload.tradeCount} معامله.`;
       appendMasterMessage('system', contextNote);
+    }
+    if (payload.automaticUpdateFailed && activeConversation?.conversationId === conversationId) {
+      masterChatStatus.textContent = 'پاسخ ذخیره شد، اما حافظه یا تمرین پذیرفته‌شده خودکار به‌روزرسانی نشد.';
     }
   } catch (error) {
     typingIndicator?.remove();
@@ -3947,6 +3914,7 @@ async function hydrateApp() {
   try {
     await loadCoachConversations();
     masterChatListStatus.textContent = '';
+    await handleCoachLaunchLink();
   } catch (error) {
     masterChatListStatus.textContent = `${error.message} وضعیت اتصال Cloudflare و پایگاه D1 را بررسی کن.`;
   }
