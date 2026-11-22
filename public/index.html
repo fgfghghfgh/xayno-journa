@@ -525,6 +525,10 @@
       .coach-drawer-header span { color: var(--text-dim); font-size: 10px; }
       .coach-drawer-header button { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.04); color: var(--text-muted); font-size: 23px; cursor: pointer; }
       .coach-drawer-new { min-height: 43px; margin-bottom: 12px; border: 1px solid rgba(0,245,160,.24); border-radius: 12px; background: rgba(0,245,160,.09); color: var(--green); font: inherit; font-weight: 750; cursor: pointer; }
+      .coach-followup-control { display: grid; gap: 6px; margin: 0 0 12px; padding: 11px 12px; border: 1px solid rgba(0,245,160,.15); border-radius: 12px; background: rgba(0,245,160,.035); }
+      .coach-followup-control label { display: flex; align-items: flex-start; gap: 8px; color: var(--text-muted); font-size: 11px; line-height: 1.8; cursor: pointer; }
+      .coach-followup-control input { flex: 0 0 auto; margin: 4px 0 0; accent-color: var(--green); }
+      .coach-followup-control p, .coach-followup-status { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.8; }
       .master-chat-log { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; margin: 0; padding: 20px clamp(14px, 7vw, 72px); border: 0; border-radius: 0; background: transparent; }
       .master-chat-log[hidden] { display: none !important; }
       .master-chat-log:empty { min-height: 0; }
@@ -1208,6 +1212,210 @@
           bottom: 4px;
         }
       }
+
+      body.coach-active-view {
+        height: 100%;
+        min-height: 100dvh;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+
+      body.coach-active-view .xh-root {
+        width: 100%;
+        max-width: none;
+        height: 100dvh;
+        min-height: 100dvh;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      body.coach-active-view .xh-root::before,
+      body.coach-active-view .xh-root::after,
+      body.coach-active-view .xh-header {
+        display: none;
+      }
+
+      body.coach-active-view .xh-shell,
+      body.coach-active-view .xh-body {
+        height: 100%;
+        min-height: 0;
+      }
+
+      body.coach-active-view .xh-body {
+        display: flex;
+        padding: 0;
+        overflow: hidden;
+      }
+
+      body.coach-active-view .coach-view {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .coach-chat-header {
+        grid-template-columns: 42px 42px minmax(0, 1fr) 42px;
+      }
+
+      .coach-back-button {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        border: 1px solid rgba(255,255,255,.09);
+        border-radius: 14px;
+        background: rgba(255,255,255,.035);
+        color: var(--text-muted);
+        font-size: 24px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .coach-back-button:hover {
+        border-color: rgba(0,245,160,.32);
+        background: rgba(0,245,160,.08);
+        color: var(--green);
+      }
+
+      .coach-active-view .coach-chat-shell {
+        height: 100%;
+        min-height: 0;
+      }
+
+      .coach-active-view .coach-chat-header {
+        flex: 0 0 auto;
+        min-height: calc(60px + env(safe-area-inset-top));
+        padding: env(safe-area-inset-top) 14px 0;
+      }
+
+      .coach-active-view .coach-mode-switch {
+        flex: 0 0 auto;
+        margin-top: 8px;
+      }
+
+      .coach-active-view .coach-chat-status:not(:empty) {
+        flex: 0 0 auto;
+        padding: 6px 16px 0;
+      }
+
+      .coach-active-view .coach-chat-welcome {
+        min-height: 0;
+        padding: 20px;
+      }
+
+      .coach-active-view .master-chat-log {
+        flex: 1 1 0;
+        min-height: 0;
+        max-height: none;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+      }
+
+      .coach-active-view .coach-load-older {
+        flex: 0 0 auto;
+        margin: 6px auto;
+      }
+
+      .coach-active-view .master-chat-form {
+        flex: 0 0 auto;
+        width: min(920px, calc(100% - 32px));
+        margin: 8px auto 0;
+      }
+
+      .coach-active-view .coach-chat-disclaimer {
+        flex: 0 0 auto;
+        margin: 6px 12px max(8px, env(safe-area-inset-bottom));
+      }
+
+      .coach-active-view .coach-session-view {
+        overflow: hidden;
+        padding: 8px clamp(12px, 3vw, 24px) max(8px, env(safe-area-inset-bottom));
+      }
+
+      .coach-active-view .coach-session-heading {
+        flex: 0 0 auto;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .coach-active-view .coach-session-heading p,
+      .coach-active-view .coach-session-storage-note {
+        display: none;
+      }
+
+      .coach-active-view .coach-session-workspace {
+        min-height: 0;
+      }
+
+      .coach-active-view .coach-session-workspace .coach-session-transcript {
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+      }
+
+      .coach-active-view .coach-session-workspace .coach-session-send {
+        flex: 0 0 auto;
+        margin-bottom: max(8px, env(safe-area-inset-bottom));
+      }
+
+      @media (max-width: 640px) {
+        .coach-chat-header {
+          grid-template-columns: 38px 38px minmax(0, 1fr) 38px;
+          gap: 7px;
+        }
+
+        .coach-back-button,
+        .coach-chat-menu-button,
+        .coach-chat-new-top {
+          width: 38px;
+          height: 38px;
+          border-radius: 12px;
+        }
+
+        .coach-active-view .coach-chat-header {
+          padding-right: 10px;
+          padding-left: 10px;
+        }
+
+        .coach-active-view .coach-mode-switch {
+          margin-top: 6px;
+        }
+
+        .coach-active-view .coach-chat-welcome {
+          padding: 12px 16px;
+        }
+
+        .coach-active-view .master-chat-log {
+          padding: 12px max(14px, 5vw);
+        }
+
+        .coach-active-view .master-message {
+          max-width: 94%;
+          font-size: 13px;
+        }
+
+        .coach-active-view .master-chat-form {
+          width: calc(100% - 20px);
+          margin-top: 5px;
+        }
+
+        .coach-active-view .coach-session-view {
+          padding: 6px 8px max(8px, env(safe-area-inset-bottom));
+        }
+
+        .coach-active-view .coach-session-heading h1 {
+          font-size: 15px;
+        }
+
+        .coach-active-view .coach-session-heading .coach-session-controls {
+          margin-top: 0;
+        }
+      }
     </style>
   </head>
   <body class="coach-active-view">
@@ -1291,6 +1499,7 @@
           <section id="coachView" class="coach-view">
             <div class="coach-chat-shell">
               <header class="coach-chat-header">
+                <button id="coachBackToJournal" class="coach-back-button" type="button" aria-label="بازگشت به ژورنال" title="بازگشت به ژورنال">→</button>
                 <button id="coachChatHistoryToggle" class="coach-chat-menu-button" type="button" aria-label="نمایش گفت‌وگوهای قبلی" aria-expanded="false">
                   <span></span><span></span><span></span>
                 </button>
@@ -1303,16 +1512,13 @@
                 </div>
                 <button id="coachNewConversation" class="coach-chat-new-top" type="button" aria-label="گفت‌وگوی جدید" title="گفت‌وگوی جدید">＋</button>
               </header>
-              <nav class="coach-mode-switch" aria-label="بخش استاد">
-                <button id="coachModeChat" class="active" type="button" aria-pressed="true">گفت‌وگوی آزاد</button>
-                <button id="coachModeSession" type="button" aria-pressed="false">جلسه با استاد</button>
-              </nav>
               <p id="masterChatStatus" class="coach-chat-status" role="status" aria-live="polite"></p>
               <div id="coachChatWelcome" class="coach-chat-welcome">
                 <span class="coach-welcome-orb" aria-hidden="true">✦</span>
                 <h1>سلام، از کجا شروع کنیم؟</h1>
                 <p>دربارهٔ تصمیم‌ها، احساسات یا الگوهای تریدت حرف بزن. من همدل می‌مانم، اما اگر لازم باشد صریح و بی‌تعارف می‌گویم.</p>
                 <div class="coach-prompt-suggestions">
+                  <button type="button" data-coach-prompt="می‌خواهم الان یک جلسهٔ آموزشی جدی و شخصی داشته باشیم. از یک موضوع مهم در ژورنال یا قول قبلی‌ام شروع کن، سؤال‌های پیگیرانه بپرس و در پایان نکته و تمرین مشخص بده.">شروع جلسهٔ آموزشی</button>
                   <button type="button" data-coach-prompt="کمکم کن آخرین معامله‌ام را از نظر تصمیم‌گیری مرور کنم.">مرور یک معامله</button>
                   <button type="button" data-coach-prompt="چطور جلوی تصمیم عجولانه و FOMO را بگیرم؟">کنترل تصمیم عجولانه</button>
                   <button type="button" data-coach-prompt="از الگوهای ترید من چه چیزی یادت مانده؟">مرور الگوهای من</button>
@@ -1325,44 +1531,6 @@
                 <button id="masterChatSend" type="submit" aria-label="ارسال پیام">↑</button>
               </form>
               <p class="coach-chat-disclaimer">استاد ابزار خودآگاهی است، نه درمان‌گر یا مشاور مالی.</p>
-              <section id="coachSessionView" class="coach-session-view" hidden aria-label="جلسهٔ استاد">
-                <header class="coach-session-heading">
-                  <div>
-                    <h1>جلسهٔ خصوصی با استاد</h1>
-                    <p>جلسه گفت‌وگویی زنده است، نه آزمون. استاد از حافظه، معامله‌ها، تمرین‌ها و یادداشت‌های کتابخانه‌ات برای پرسش‌های پیگیرانه استفاده می‌کند.</p>
-                  </div>
-                  <div class="coach-session-controls">
-                    <label for="coachStyle">سبک مربی
-                      <select id="coachStyle">
-                        <option value="direct" selected>رک و سخت‌گیر</option>
-                        <option value="supportive">آرام و حمایتی</option>
-                      </select>
-                    </label>
-                    <button id="coachSessionStart" type="button">شروع جلسه</button>
-                  </div>
-                </header>
-                <div class="coach-session-workspace">
-                  <details class="coach-session-archive">
-                    <summary>جلسه‌های قبلی <span id="coachSessionCount"></span></summary>
-                    <div id="coachSessionHistory" class="coach-session-history"></div>
-                  </details>
-                  <div id="coachSessionWelcome" class="coach-session-welcome">
-                    <span class="coach-welcome-orb" aria-hidden="true">✦</span>
-                    <h2>برای یک گفت‌وگوی واقعی آماده‌ای؟</h2>
-                    <p>هر بار فقط روی یک موضوع تمرکز می‌کنیم؛ استاد سؤال می‌پرسد، پاسخ تو را با تجربه‌های ثبت‌شده مقایسه می‌کند و تا وقتی خودت آماده‌ای جلسه ادامه پیدا می‌کند.</p>
-                    <button type="button" class="coach-session-start-inline" data-start-coach-session>شروع جلسهٔ شخصی</button>
-                  </div>
-                  <div id="coachSessionLog" class="coach-session-transcript" aria-live="polite" hidden></div>
-                  <form id="coachSessionForm" class="coach-session-send" hidden>
-                    <textarea id="coachSessionInput" maxlength="3000" rows="1" placeholder="هرقدر لازم است توضیح بده؛ جلسه عجله‌ای نیست..." aria-label="پاسخ در جلسه"></textarea>
-                    <button id="coachSessionSend" type="submit" aria-label="ارسال پاسخ جلسه">↑</button>
-                  </form>
-                  <button id="coachSessionFinish" class="coach-session-finish" type="button" hidden>پایان جلسه و ساخت جمع‌بندی</button>
-                </div>
-                <p id="coachSessionStatus" class="coach-session-status" role="status" aria-live="polite"></p>
-                <div id="coachSessionSummary" class="coach-session-summary" hidden></div>
-                <p class="coach-session-storage-note">گفت‌وگو، جمع‌بندی و تمرین‌ها در ابر ذخیره می‌شوند و انقضای خودکار ندارند؛ تا وقتی حساب و سرویس Cloudflare فعال است. می‌توانی هر جلسه را خودت حذف کنی.</p>
-              </section>
             </div>
             <div id="coachChatDrawerBackdrop" class="coach-chat-drawer-backdrop" hidden></div>
             <aside id="coachChatDrawer" class="coach-chat-drawer" role="dialog" aria-modal="true" aria-label="گفت‌وگوهای قبلی" aria-hidden="true">
@@ -1371,6 +1539,14 @@
                 <button id="coachChatDrawerClose" type="button" aria-label="بستن فهرست">×</button>
               </header>
               <button id="coachNewConversationDrawer" class="coach-drawer-new" type="button">＋ گفت‌وگوی جدید</button>
+              <section class="coach-followup-control" aria-label="پیگیری خودکار استاد">
+                <label for="coachProactiveFollowup">
+                  <input id="coachProactiveFollowup" type="checkbox">
+                  <span>اجازه بده استاد برای پیگیری مهم، در تلگرام پیام بدهد</span>
+                </label>
+                <p>برای تشخیص نیاز، پیام‌ها و زمینهٔ ژورنال با هوش مصنوعی بررسی می‌شوند. فقط پیگیری مهم به تلگرام می‌آید؛ بررسی ساعتی است و هر وقت بخواهی خاموشش کن.</p>
+                <p id="coachProactiveStatus" class="coach-followup-status" role="status" aria-live="polite"></p>
+              </section>
               <input id="coachConversationSearch" class="coach-chat-search" type="search" maxlength="100" placeholder="جست‌وجو در گفت‌وگوها..." aria-label="جست‌وجو در گفت‌وگوها">
               <p id="masterChatListStatus" class="coach-session-status" role="status" aria-live="polite"></p>
               <div id="coachConversationList" class="coach-chat-list" aria-live="polite"></div>
@@ -1380,7 +1556,7 @@
           <section id="masterView" class="master-view" hidden>
             <header class="master-view-heading">
               <h1>آمار و ابزارهای استاد</h1>
-              <p>گزارش‌ها، جلسه‌های ساختاریافته و تمرین‌های خودآگاهی از این بخش در دسترس‌اند.</p>
+              <p>گزارش‌ها و ابزارهای خودآگاهی از این بخش در دسترس‌اند؛ گفت‌وگو و جلسهٔ آموزشی هر دو در چت استاد انجام می‌شوند.</p>
             </header>
             <article class="master-card coach-memory-card">
               <h2>چیزهایی که استاد به خاطر سپرده</h2>
@@ -1738,6 +1914,6 @@
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
-    <script src="/app.js?v=coach-session-v1"></script>
+    <script src="/app.js?v=coach-unified-v1"></script>
   </body>
 </html>

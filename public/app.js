@@ -67,6 +67,7 @@ const coachSessionSummary = document.getElementById('coachSessionSummary');
 const coachSessionCount = document.getElementById('coachSessionCount');
 const coachModeChatButton = document.getElementById('coachModeChat');
 const coachModeSessionButton = document.getElementById('coachModeSession');
+const coachBackToJournalButton = document.getElementById('coachBackToJournal');
 const masterChatLog = document.getElementById('masterChatLog');
 const masterChatForm = document.getElementById('masterChatForm');
 const masterChatInput = document.getElementById('masterChatInput');
@@ -95,6 +96,8 @@ const coachChatHistoryToggle = document.getElementById('coachChatHistoryToggle')
 const coachChatDrawer = document.getElementById('coachChatDrawer');
 const coachChatDrawerBackdrop = document.getElementById('coachChatDrawerBackdrop');
 const coachChatActiveTitle = document.getElementById('coachChatActiveTitle');
+const coachProactiveFollowup = document.getElementById('coachProactiveFollowup');
+const coachProactiveStatus = document.getElementById('coachProactiveStatus');
 const masterChatListStatus = document.getElementById('masterChatListStatus');
 const coachMemoryList = document.getElementById('coachMemoryList');
 const coachMemoryStatus = document.getElementById('coachMemoryStatus');
@@ -2291,6 +2294,10 @@ function renderAll() {
 }
 
 journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
+coachBackToJournalButton?.addEventListener('click', () => {
+  setJournalView('journal');
+  window.scrollTo({ top: 0, behavior: 'auto' });
+});
 if (monthlyComparisonMonth) {
   const defaultComparisonDate = new Date();
   defaultComparisonDate.setDate(1);
@@ -2890,31 +2897,17 @@ function renderCoachSessionTranscript() {
   }
 }
 
-function setCoachMode(mode) {
-  activeCoachMode = mode === 'session' ? 'session' : 'chat';
-  const isSession = activeCoachMode === 'session';
-  coachSessionView.hidden = !isSession;
-  coachChatWelcome.hidden = isSession || masterChatHistory.length > 0;
-  masterChatLog.hidden = isSession || masterChatHistory.length === 0;
-  masterChatForm.hidden = isSession;
-  coachLoadOlderMessagesButton.hidden = isSession || !conversationHasMoreMessages;
-  document.querySelector('.coach-chat-disclaimer').hidden = isSession;
-  coachChatHistoryToggle.hidden = isSession;
-  coachNewConversationButton.hidden = isSession;
-  masterChatStatus.hidden = isSession;
-  coachModeChatButton.classList.toggle('active', !isSession);
-  coachModeSessionButton.classList.toggle('active', isSession);
-  coachModeChatButton.setAttribute('aria-pressed', String(!isSession));
-  coachModeSessionButton.setAttribute('aria-pressed', String(isSession));
-  coachChatActiveTitle.textContent = isSession ? 'جلسه با استاد' : (activeConversation?.title || 'استاد');
-  if (isSession) {
-    closeCoachChatDrawer({ restoreFocus: false });
-    renderCoachSessionTranscript();
-    requestAnimationFrame(() => {
-      if (activeCoachingSession?.status === 'active') coachSessionReplyInput.focus();
-      else coachSessionStartButton.focus();
-    });
-  }
+function setCoachMode() {
+  activeCoachMode = 'chat';
+  coachChatWelcome.hidden = masterChatHistory.length > 0;
+  masterChatLog.hidden = masterChatHistory.length === 0;
+  masterChatForm.hidden = false;
+  coachLoadOlderMessagesButton.hidden = !conversationHasMoreMessages;
+  document.querySelector('.coach-chat-disclaimer').hidden = false;
+  coachChatHistoryToggle.hidden = false;
+  coachNewConversationButton.hidden = false;
+  masterChatStatus.hidden = false;
+  coachChatActiveTitle.textContent = activeConversation?.title || 'استاد';
 }
 
 function renderMasterChatTranscript() {
@@ -2997,10 +2990,55 @@ function openCoachChatDrawer() {
   coachChatHistoryToggle.setAttribute('aria-expanded', 'true');
   document.body.classList.add('coach-drawer-open');
   requestAnimationFrame(() => coachConversationSearch.focus());
+  loadCoachProactiveFollowup().catch((error) => {
+    coachProactiveStatus.textContent = error.message || 'خواندن تنظیم پیگیری استاد ناموفق بود.';
+  });
   loadCoachConversations(coachConversationSearch.value.trim()).catch((error) => {
     masterChatListStatus.textContent = error.message || 'بارگذاری گفت‌وگوها ناموفق بود.';
   });
 }
+
+async function loadCoachProactiveFollowup() {
+  coachProactiveFollowup.disabled = true;
+  try {
+    const response = await apiFetch('/api/coach/followups');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || typeof payload.enabled !== 'boolean') {
+      throw new Error(payload.message || 'خواندن تنظیم پیگیری استاد ناموفق بود.');
+    }
+    coachProactiveFollowup.checked = payload.enabled;
+    coachProactiveStatus.textContent = payload.enabled
+      ? 'پیگیری مهم فعال است؛ بررسی ساعتی انجام می‌شود.'
+      : 'پیگیری خودکار خاموش است.';
+  } finally {
+    coachProactiveFollowup.disabled = false;
+  }
+}
+
+coachProactiveFollowup?.addEventListener('change', async () => {
+  const enabled = coachProactiveFollowup.checked;
+  coachProactiveFollowup.disabled = true;
+  coachProactiveStatus.textContent = enabled ? 'در حال فعال‌کردن پیگیری تلگرام...' : 'در حال خاموش‌کردن پیگیری...';
+  try {
+    const response = await apiFetch('/api/coach/followups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.enabled !== enabled) {
+      throw new Error(payload.message || 'ذخیرهٔ تنظیم پیگیری استاد ناموفق بود.');
+    }
+    coachProactiveStatus.textContent = enabled
+      ? 'پیگیری مهم فعال شد؛ بررسی ساعتی انجام می‌شود. هر زمان بخواهی می‌توانی خاموشش کنی.'
+      : 'پیگیری خودکار خاموش شد.';
+  } catch (error) {
+    coachProactiveFollowup.checked = !enabled;
+    coachProactiveStatus.textContent = error.message || 'ذخیرهٔ تنظیم پیگیری استاد ناموفق بود.';
+  } finally {
+    coachProactiveFollowup.disabled = false;
+  }
+});
 
 function closeCoachChatDrawer({ restoreFocus = true } = {}) {
   if (!coachChatDrawer || coachChatDrawer.getAttribute('aria-hidden') === 'true') return;
@@ -3291,11 +3329,6 @@ coachNewConversationDrawerButton?.addEventListener('click', async () => {
   } catch (error) {
     masterChatListStatus.textContent = error.message || 'ساخت گفت‌وگوی جدید ناموفق بود.';
   }
-});
-coachModeChatButton?.addEventListener('click', () => setCoachMode('chat'));
-coachModeSessionButton?.addEventListener('click', () => setCoachMode('session'));
-document.querySelectorAll('[data-start-coach-session]').forEach((button) => {
-  button.addEventListener('click', startCoachSession);
 });
 coachChatHistoryToggle?.addEventListener('click', () => {
   if (coachChatDrawer.getAttribute('aria-hidden') === 'false') closeCoachChatDrawer();
@@ -3911,11 +3944,6 @@ async function hydrateApp() {
   state.selectedDate = localDateKey(new Date());
   resetForm();
   renderAll();
-  try {
-    await loadCoachSessions();
-  } catch (error) {
-    coachSessionStatus.textContent = `${error.message} وضعیت اتصال Cloudflare و پایگاه D1 را بررسی کن.`;
-  }
   try {
     await loadCoachConversations();
     masterChatListStatus.textContent = '';
