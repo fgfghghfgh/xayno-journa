@@ -1,9 +1,12 @@
 const STORAGE_KEY = 'xayno-local-journal';
+const TRADE_BASELINE_STORAGE_KEY = 'xayno-local-trade-baseline-v1';
+const DEFERRED_TRADES_STORAGE_KEY = 'xayno-deferred-local-trades-v1';
 const CHECKIN_STORAGE_KEY = 'xayno-daily-checkins-v1';
 const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
 const TRADING_PROFILE_STORAGE_KEY = 'xayno-trading-profile-v1';
 const PERSONAL_RULES_STORAGE_KEY = 'xayno-personal-trading-rules-v1';
 const LESSON_LIBRARY_STORAGE_KEY = 'xayno-lesson-library-v1';
+const CENTRAL_TOMBSTONES_STORAGE_KEY = 'xayno-central-record-tombstones-v1';
 const TRADING_PROFILE_CATEGORIES = [
   ['triggers', 'محرک‌های احساسی'],
   ['moneyBeliefs', 'باورهای احتمالی دربارهٔ پول'],
@@ -108,10 +111,16 @@ const reportApiState = document.getElementById('reportApiState');
 const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
 let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
+let cloudTradesVerified = false;
+let tradeBaselineReady = false;
+let deferredLocalTradeCount = 0;
+let centralSyncPromise = null;
+let centralSyncRequested = false;
 let pushToastTimer = null;
 let activeJournalView = 'journal';
 let masterChatHistory = [];
 let coachingSessions = [];
+const invalidCentralLocalStorage = new Set();
 let activeCoachingSession = null;
 let activeCoachingQuestion = 0;
 let coachSessionBusy = false;
@@ -886,7 +895,12 @@ function openTradeChart(trade) {
 
 function updateSyncStatus(online) {
   syncLabel.textContent = state.remoteEnabled ? 'همگام‌سازی ابری' : 'ذخیرهٔ محلی';
-  syncState.textContent = state.remoteEnabled ? (online ? 'متصل' : 'قطع') : 'فعال';
+  syncState.textContent = state.remoteEnabled
+    ? (online ? `متصل${deferredLocalTradeCount ? ` · ${deferredLocalTradeCount} محلی` : ''}` : 'قطع')
+    : 'فعال';
+  syncState.title = deferredLocalTradeCount
+    ? `${deferredLocalTradeCount} معاملهٔ موجود روی همین دستگاه حفظ شده و خودکار به Cloudflare منتقل نمی‌شود.`
+    : '';
   syncState.style.color = (!state.remoteEnabled || online) ? 'var(--green)' : 'var(--yellow)';
 }
 
@@ -979,7 +993,7 @@ async function enableJournalPush() {
 
 async function changeJournalAccessKey() {
   if (!state.remoteEnabled) {
-    window.alert('اتصال ابری هنوز در Render فعال نشده است.');
+    window.alert('اتصال ابری Cloudflare در دسترس نیست.');
     return;
   }
   localStorage.removeItem(ACCESS_KEY_STORAGE);
@@ -988,10 +1002,10 @@ async function changeJournalAccessKey() {
     promptForAccessKey();
     updateSyncStatus(false);
     const response = await apiFetch('/api/trades');
-    if (response.status === 401) throw new Error('کلید دسترسی رد شد؛ مقدار JOURNAL_ACCESS_KEY در Render را بررسی کن.');
+    if (response.status === 401) throw new Error('کلید دسترسی رد شد؛ آن را بررسی و دوباره وارد کن.');
     if (response.status === 503) {
       const details = await response.json().catch(() => ({}));
-      throw new Error(details.message || 'اتصال دیتابیس برقرار نشد؛ جدول journal_trades را در Supabase بررسی کن.');
+      throw new Error(details.message || 'اتصال پایگاه ابری D1 برقرار نشد.');
     }
     if (!response.ok) throw new Error(`خطای سرور (${response.status}).`);
     const payload = await response.json();
@@ -1080,25 +1094,279 @@ function saveLocalTrades(trades) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(trades));
 }
 
+function storedTradeIds(key) {
+  const raw = localStorage.getItem(key);
+  if (key === TRADE_BASELINE_STORAGE_KEY && raw === null) {
+    throw new Error('وضعیت اولیهٔ معاملات ثبت نشده؛ همگام‌سازی برای جلوگیری از انتقال ناخواسته متوقف شد.');
+  }
+  const parsed = JSON.parse(raw || '[]');
+  if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== 'string')) {
+    throw new Error('فهرست شناسه‌های معاملات محلی معتبر نیست؛ داده‌ها حفظ شدند.');
+  }
+  return parsed;
+}
+
+function establishTradeSyncBaseline(localTrades, cloudTrades) {
+  if (!state.remoteEnabled) {
+    cloudTradesVerified = true;
+    return;
+  }
+  const cloudIds = new Set(cloudTrades.map((trade) => String(trade.id)));
+  const baselineIds = storedTradeIds(TRADE_BASELINE_STORAGE_KEY);
+  const deferredIds = new Set(storedTradeIds(DEFERRED_TRADES_STORAGE_KEY));
+  for (const trade of localTrades) {
+    const id = String(trade.id || '');
+    if (id && !cloudIds.has(id) && baselineIds.includes(id)) deferredIds.add(id);
+  }
+  localStorage.setItem(DEFERRED_TRADES_STORAGE_KEY, JSON.stringify([...deferredIds]));
+  tradeBaselineReady = true;
+  cloudTradesVerified = true;
+}
+
+function mergeCloudAndDeferredTrades(cloudTrades, localTrades) {
+  const cloudIds = new Set(cloudTrades.map((trade) => String(trade.id)));
+  const deferredIds = new Set(state.remoteEnabled ? storedTradeIds(DEFERRED_TRADES_STORAGE_KEY) : []);
+  const deferred = localTrades.filter((trade) => deferredIds.has(String(trade.id)) && !cloudIds.has(String(trade.id)));
+  deferredLocalTradeCount = deferred.length;
+  return [...cloudTrades, ...deferred];
+}
+
+function centralCollectionSpecs() {
+  return [
+    {
+      collection: 'checkins',
+      read: () => state.dailyCheckins,
+      write: (records) => { state.dailyCheckins = records; renderDailyCheckin(); },
+    },
+    {
+      collection: 'personal_rules',
+      read: () => personalRules,
+      write: (records) => { personalRules = records; renderPersonalRules(); },
+    },
+    {
+      collection: 'lesson_library',
+      read: () => lessonLibrary,
+      write: (records) => { lessonLibrary = records; renderLessonLibrary(); },
+    },
+    {
+      collection: 'memories',
+      read: () => tradingProfile ? [{ ...tradingProfile, id: 'trading_profile' }] : [],
+      write: (records) => {
+        const profile = records.find((record) => record.id === 'trading_profile');
+        tradingProfile = profile ? Object.fromEntries(Object.entries(profile).filter(([key]) => key !== 'id' && key !== 'deleted')) : null;
+        tradingProfileSaved = Boolean(tradingProfile);
+        renderTradingProfile();
+      },
+    },
+  ];
+}
+
+function readCentralTombstones() {
+  const records = JSON.parse(localStorage.getItem(CENTRAL_TOMBSTONES_STORAGE_KEY) || '[]');
+  if (!Array.isArray(records) || records.some((record) => !record
+    || typeof record.collection !== 'string' || typeof record.id !== 'string' || typeof record.updatedAt !== 'string')) {
+    throw new Error('نشانگرهای حذف داده‌های ابری قابل خواندن نیستند؛ داده‌ها حفظ شدند.');
+  }
+  return records;
+}
+
+function centralRecordId(record) {
+  return String(record?.id || record?.date || '').trim();
+}
+
+function centralRecordTime(record) {
+  const timestamp = Date.parse(record?.updatedAt || record?.approvedAt || record?.createdAt || record?.generatedAt || record?.date || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+async function postCentralRecord(collection, record) {
+  const response = await apiFetch(`/api/central/${encodeURIComponent(collection)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ record }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || `همگام‌سازی ${collection} در فضای ابری ناموفق بود.`);
+}
+
+async function syncCentralRecordsOnce() {
+  const tombstones = readCentralTombstones();
+  const nextTombstones = [...tombstones];
+
+  for (const spec of centralCollectionSpecs()) {
+    const response = await apiFetch(`/api/central/${encodeURIComponent(spec.collection)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || `خواندن ${spec.collection} از فضای ابری ناموفق بود.`);
+    if (!Array.isArray(payload.records)) throw new Error(`پاسخ فضای ابری برای ${spec.collection} معتبر نیست.`);
+
+    const localRecords = spec.read().filter((record) => record && centralRecordId(record));
+    const candidates = [
+      ...payload.records.map((record) => ({ record, source: 'cloud' })),
+      ...localRecords.map((record) => ({ record, source: 'local' })),
+      ...nextTombstones.filter((record) => record.collection === spec.collection)
+        .map((record) => ({ record: { ...record, deleted: true }, source: 'local' })),
+    ];
+    const winners = new Map();
+    for (const candidate of candidates) {
+      const id = centralRecordId(candidate.record);
+      if (!id) continue;
+      const current = winners.get(id);
+      const newer = !current
+        || centralRecordTime(candidate.record) > centralRecordTime(current.record)
+        || (centralRecordTime(candidate.record) === centralRecordTime(current.record)
+          && candidate.source === 'cloud' && current.source === 'local');
+      if (newer) winners.set(id, candidate);
+    }
+
+    const pendingWrites = [];
+    for (const [id, winner] of winners) {
+      if (winner.source !== 'local') continue;
+      const record = { ...winner.record, id };
+      if (!record.updatedAt) record.updatedAt = new Date().toISOString();
+      pendingWrites.push(postCentralRecord(spec.collection, record));
+    }
+    for (let index = 0; index < pendingWrites.length; index += 10) {
+      await Promise.all(pendingWrites.slice(index, index + 10));
+    }
+
+    for (const [id, winner] of winners) {
+      if (winner.record.deleted) {
+        if (!nextTombstones.some((record) => record.collection === spec.collection && record.id === id)) {
+          nextTombstones.push({ collection: spec.collection, id, updatedAt: winner.record.updatedAt || new Date().toISOString() });
+        }
+      } else {
+        for (let index = nextTombstones.length - 1; index >= 0; index -= 1) {
+          if (nextTombstones[index].collection === spec.collection && nextTombstones[index].id === id) nextTombstones.splice(index, 1);
+        }
+      }
+    }
+
+    const records = [...winners.values()]
+      .filter(({ record }) => !record.deleted)
+      .map(({ record }) => record)
+      .sort((left, right) => centralRecordTime(right) - centralRecordTime(left));
+    spec.write(records);
+    const storageKey = {
+      checkins: CHECKIN_STORAGE_KEY,
+      personal_rules: PERSONAL_RULES_STORAGE_KEY,
+      lesson_library: LESSON_LIBRARY_STORAGE_KEY,
+      memories: TRADING_PROFILE_STORAGE_KEY,
+    }[spec.collection];
+    if (invalidCentralLocalStorage.has(spec.collection)) continue;
+    if (spec.collection === 'memories') {
+      const profile = records.find((record) => record.id === 'trading_profile');
+      if (profile) localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(Object.entries(profile).filter(([key]) => key !== 'id'))));
+      else localStorage.removeItem(storageKey);
+    } else {
+      localStorage.setItem(storageKey, JSON.stringify(records));
+    }
+  }
+
+  localStorage.setItem(CENTRAL_TOMBSTONES_STORAGE_KEY, JSON.stringify(nextTombstones));
+}
+
+function syncCentralRecords() {
+  if (!state.remoteEnabled) return Promise.resolve();
+  if (centralSyncPromise) {
+    centralSyncRequested = true;
+    return centralSyncPromise;
+  }
+  centralSyncPromise = (async () => {
+    try {
+      do {
+        centralSyncRequested = false;
+        await syncCentralRecordsOnce();
+      } while (centralSyncRequested);
+      if (checkinLocalNote) {
+        checkinLocalNote.textContent = invalidCentralLocalStorage.size
+          ? 'داده‌های معتبر با فضای ابری همگام شدند؛ موارد محلیِ ناخوانا دست‌نخورده باقی ماندند.'
+          : 'چک‌این‌ها، قوانین، درس‌ها و نقشهٔ شخصیت با فضای ابری همگام شدند.';
+      }
+    } catch (error) {
+      if (checkinLocalNote) checkinLocalNote.textContent = `${error.message} داده‌های روی این دستگاه حفظ شدند و بعداً دوباره تلاش می‌شود.`;
+      throw error;
+    } finally {
+      centralSyncPromise = null;
+    }
+  })();
+  return centralSyncPromise;
+}
+
+function queueCentralCollectionSync(collection, previousRecords, nextRecords, statusElement, successMessage) {
+  const nextIds = new Set(nextRecords.map(centralRecordId));
+  let tombstones;
+  try {
+    tombstones = readCentralTombstones();
+  } catch (error) {
+    if (statusElement) statusElement.textContent = error.message;
+    return;
+  }
+  const now = new Date().toISOString();
+  for (const record of previousRecords) {
+    const id = centralRecordId(record);
+    if (id && !nextIds.has(id) && !tombstones.some((item) => item.collection === collection && item.id === id)) {
+      tombstones.push({ collection, id, updatedAt: now });
+    }
+  }
+  for (const record of nextRecords) {
+    const id = centralRecordId(record);
+    for (let index = tombstones.length - 1; index >= 0; index -= 1) {
+      if (tombstones[index].collection === collection && tombstones[index].id === id
+        && centralRecordTime(record) > centralRecordTime(tombstones[index])) tombstones.splice(index, 1);
+    }
+  }
+  try {
+    localStorage.setItem(CENTRAL_TOMBSTONES_STORAGE_KEY, JSON.stringify(tombstones));
+  } catch (error) {
+    if (statusElement) statusElement.textContent = 'داده روی این دستگاه ذخیره شد، اما ثبت نشانگر حذف در مرورگر ناموفق بود.';
+    return;
+  }
+  if (!state.remoteEnabled) {
+    if (statusElement) statusElement.textContent = `${successMessage} فقط روی همین دستگاه؛ اتصال ابری در دسترس نیست.`;
+    return;
+  }
+  syncCentralRecords().then(() => {
+    if (statusElement) statusElement.textContent = `${successMessage} با فضای ابری همگام شد.`;
+  }).catch((error) => {
+    if (statusElement) statusElement.textContent = `روی این دستگاه ذخیره شد؛ همگام‌سازی ابری ناموفق بود: ${error.message}`;
+  });
+}
+
 async function fetchServerTrades() {
   try {
     const response = await apiFetch('/api/trades');
-    if (!response.ok) throw new Error('api fail');
+    if (!response.ok) throw new Error(`خواندن معاملات ابری ناموفق بود (${response.status}).`);
     const payload = await response.json();
-    return Array.isArray(payload.trades) ? payload.trades : [];
+    if (!Array.isArray(payload.trades)) throw new Error('فهرست معاملات ابری معتبر نیست.');
+    return payload.trades;
   } catch (error) {
-    return readLocalTrades();
+    updateSyncStatus(false);
+    return null;
   }
 }
 
-async function syncLocalTradesToServer(pendingTrades = readLocalTrades()) {
+async function syncLocalTradesToServer() {
   if (syncInProgress) return;
   syncInProgress = true;
   try {
+    let remoteTrades;
+    if (!cloudTradesVerified) {
+      remoteTrades = await fetchServerTrades();
+      if (!Array.isArray(remoteTrades)) return;
+      const localTrades = readLocalTrades();
+      establishTradeSyncBaseline(localTrades, remoteTrades);
+      const mergedTrades = mergeCloudAndDeferredTrades(remoteTrades, localTrades);
+      saveLocalTrades(mergedTrades);
+      state.trades = mergedTrades;
+      renderAll();
+    }
+    const pendingTrades = readLocalTrades();
+    const deferredIds = new Set(state.remoteEnabled ? storedTradeIds(DEFERRED_TRADES_STORAGE_KEY) : []);
+    const uploadTrades = pendingTrades.filter((trade) => !deferredIds.has(String(trade.id)));
     const response = await apiFetch('/api/trades/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trades: pendingTrades, deleted: [] }),
+      body: JSON.stringify({ trades: uploadTrades, deleted: [] }),
     });
     if (!response.ok) {
       updateSyncStatus(false);
@@ -1106,8 +1374,9 @@ async function syncLocalTradesToServer(pendingTrades = readLocalTrades()) {
     }
     const payload = await response.json();
     if (Array.isArray(payload.trades)) {
-      saveLocalTrades(payload.trades);
-      state.trades = payload.trades;
+      const mergedTrades = mergeCloudAndDeferredTrades(payload.trades, readLocalTrades());
+      saveLocalTrades(mergedTrades);
+      state.trades = mergedTrades;
       renderAll();
       updateSyncStatus(true);
     }
@@ -2119,9 +2388,13 @@ document.querySelectorAll('[data-test-api]').forEach((button) => {
 
 function loadDailyCheckins() {
   const raw = localStorage.getItem(CHECKIN_STORAGE_KEY);
-  if (!raw) return [];
+  if (!raw) {
+    invalidCentralLocalStorage.delete('checkins');
+    return [];
+  }
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) throw new Error('ساختار ذخیرهٔ چک‌این قابل خواندن نیست.');
+  invalidCentralLocalStorage.delete('checkins');
   return parsed.filter((record) => record
     && /^\d{4}-\d{2}-\d{2}$/.test(record.date)
     && [record.sleep, record.stress, record.mood].every((value) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 5));
@@ -2242,7 +2515,7 @@ function renderTradingProfile() {
   const meta = document.createElement('p');
   meta.className = 'trading-profile-meta';
   const generatedAt = tradingProfile.generatedAt ? new Date(tradingProfile.generatedAt).toLocaleString('fa-IR') : '';
-  meta.textContent = `${tradingProfile.tradeCount ?? 0} معامله و ${tradingProfile.sessionCount ?? 0} جلسه · ${generatedAt}${tradingProfileSaved ? ' · ذخیره‌شده فقط روی این دستگاه' : ' · پیش‌نویس؛ هنوز ذخیره نشده'}`;
+  meta.textContent = `${tradingProfile.tradeCount ?? 0} معامله و ${tradingProfile.sessionCount ?? 0} جلسه · ${generatedAt}${tradingProfileSaved ? ' · ذخیره‌شده' : ' · پیش‌نویس؛ هنوز ذخیره نشده'}`;
   tradingProfileResult.appendChild(meta);
   if (tradingProfile.notice) {
     const notice = document.createElement('p');
@@ -2292,7 +2565,9 @@ function loadTradingProfile() {
       tradingProfile = saved;
       tradingProfileSaved = true;
     }
+    invalidCentralLocalStorage.delete('memories');
   } catch (error) {
+    invalidCentralLocalStorage.add('memories');
     tradingProfileStatus.textContent = 'خواندن نقشهٔ ذخیره‌شده ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
   }
   renderTradingProfile();
@@ -2332,15 +2607,19 @@ tradingProfileEditButton?.addEventListener('click', () => {
 
 tradingProfileSaveButton?.addEventListener('click', () => {
   if (!tradingProfile) return;
+  const previous = tradingProfile ? [{ ...tradingProfile, id: 'trading_profile' }] : [];
   for (const [key] of TRADING_PROFILE_CATEGORIES) {
     const field = tradingProfileResult.querySelector(`[data-profile-category="${key}"]`);
     tradingProfile[key] = field.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).slice(0, 5);
   }
   try {
+    tradingProfile.updatedAt = new Date().toISOString();
     localStorage.setItem(TRADING_PROFILE_STORAGE_KEY, JSON.stringify(tradingProfile));
+    invalidCentralLocalStorage.delete('memories');
     tradingProfileSaved = true;
     tradingProfileEditing = false;
-    tradingProfileStatus.textContent = 'نقشهٔ تأییدشده فقط روی همین مرورگر ذخیره شد و با فضای ابری همگام نیست.';
+    tradingProfileStatus.textContent = 'نقشهٔ تأییدشده روی همین دستگاه ذخیره شد؛ در حال همگام‌سازی ابری...';
+    queueCentralCollectionSync('memories', previous, [{ ...tradingProfile, id: 'trading_profile' }], tradingProfileStatus, 'نقشهٔ تأییدشده');
   } catch (error) {
     tradingProfileStatus.textContent = 'ذخیرهٔ نقشه ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن. تغییرات فعلی هنوز روی صفحه هستند.';
   }
@@ -2348,12 +2627,15 @@ tradingProfileSaveButton?.addEventListener('click', () => {
 });
 
 tradingProfileDeleteButton?.addEventListener('click', () => {
+  const previous = tradingProfile ? [{ ...tradingProfile, id: 'trading_profile' }] : [];
   try {
     localStorage.removeItem(TRADING_PROFILE_STORAGE_KEY);
+    invalidCentralLocalStorage.delete('memories');
     tradingProfile = null;
     tradingProfileSaved = false;
     tradingProfileEditing = false;
-    tradingProfileStatus.textContent = 'نقشهٔ ذخیره‌شده از همین مرورگر پاک شد.';
+    tradingProfileStatus.textContent = 'نقشه از این دستگاه پاک شد؛ در حال همگام‌سازی حذف با ابر...';
+    queueCentralCollectionSync('memories', previous, [], tradingProfileStatus, 'حذف نقشه');
     renderTradingProfile();
   } catch (error) {
     tradingProfileStatus.textContent = 'پاک‌کردن نقشه ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
@@ -2362,9 +2644,22 @@ tradingProfileDeleteButton?.addEventListener('click', () => {
 
 function savePersonalRules(nextRules) {
   try {
-    localStorage.setItem(PERSONAL_RULES_STORAGE_KEY, JSON.stringify(nextRules));
-    personalRules = nextRules;
+    const previous = personalRules;
+    const now = new Date().toISOString();
+    const prepared = nextRules.map((rule) => {
+      const existing = previous.find((item) => item.id === rule.id);
+      return {
+        ...rule,
+        updatedAt: existing && JSON.stringify(existing) === JSON.stringify(rule)
+          ? (rule.updatedAt || existing.updatedAt || existing.approvedAt || now)
+          : now,
+      };
+    });
+    localStorage.setItem(PERSONAL_RULES_STORAGE_KEY, JSON.stringify(prepared));
+    invalidCentralLocalStorage.delete('personal_rules');
+    personalRules = prepared;
     renderPersonalRules();
+    queueCentralCollectionSync('personal_rules', previous, prepared, personalRulesStatus, 'قوانین شخصی');
     return true;
   } catch (error) {
     personalRulesStatus.textContent = 'ذخیرهٔ قانون ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
@@ -2386,13 +2681,13 @@ function renderPersonalRules() {
     const title = document.createElement('strong');
     title.textContent = rule.rule;
     const meta = document.createElement('p');
-    meta.textContent = `تأییدشدهٔ ${new Date(rule.approvedAt).toLocaleDateString('fa-IR')} · فقط روی این دستگاه`;
+    meta.textContent = `تأییدشدهٔ ${new Date(rule.approvedAt).toLocaleDateString('fa-IR')}`;
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.textContent = 'حذف قانون';
     remove.addEventListener('click', () => {
       if (savePersonalRules(personalRules.filter((item) => item.id !== rule.id))) {
-        personalRulesStatus.textContent = 'قانون از همین دستگاه حذف شد.';
+        personalRulesStatus.textContent = 'قانون حذف شد؛ در حال همگام‌سازی با ابر...';
       }
     });
     row.append(title, meta, remove);
@@ -2426,7 +2721,7 @@ function renderPersonalRules() {
       if (savePersonalRules(next)) {
         personalRuleSuggestions = personalRuleSuggestions.filter((item) => item !== suggestion);
         renderPersonalRules();
-        personalRulesStatus.textContent = 'قانون با تأیید تو روی همین مرورگر ذخیره شد.';
+        personalRulesStatus.textContent = 'قانون با تأیید تو ذخیره شد؛ در حال همگام‌سازی با ابر...';
       }
     });
     card.append(title, reason, evidence, approve);
@@ -2441,7 +2736,9 @@ function loadPersonalRules() {
       throw new Error('ساختار قوانین شخصی معتبر نیست.');
     }
     personalRules = saved;
+    invalidCentralLocalStorage.delete('personal_rules');
   } catch (error) {
+    invalidCentralLocalStorage.add('personal_rules');
     personalRulesStatus.textContent = 'خواندن قوانین قبلی ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
   }
   renderPersonalRules();
@@ -2449,9 +2746,17 @@ function loadPersonalRules() {
 
 function saveLessonLibrary(nextLessons) {
   try {
-    localStorage.setItem(LESSON_LIBRARY_STORAGE_KEY, JSON.stringify(nextLessons));
-    lessonLibrary = nextLessons;
+    const previous = lessonLibrary;
+    const now = new Date().toISOString();
+    const prepared = nextLessons.map((lesson) => ({
+      ...lesson,
+      updatedAt: lesson.updatedAt || now,
+    }));
+    localStorage.setItem(LESSON_LIBRARY_STORAGE_KEY, JSON.stringify(prepared));
+    invalidCentralLocalStorage.delete('lesson_library');
+    lessonLibrary = prepared;
     renderLessonLibrary();
+    queueCentralCollectionSync('lesson_library', previous, prepared, lessonLibraryStatus, 'کتاب درس');
     return true;
   } catch (error) {
     lessonLibraryStatus.textContent = 'ذخیرهٔ کتابخانه ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
@@ -2507,7 +2812,7 @@ function renderLessonLibrary() {
       remove.addEventListener('click', () => {
         if (!window.confirm('این نکته از کتابخانه حذف شود؟')) return;
         if (saveLessonLibrary(lessonLibrary.filter((item) => item.id !== lesson.id))) {
-          lessonLibraryStatus.textContent = 'نکته از کتابخانه حذف شد.';
+          lessonLibraryStatus.textContent = 'نکته حذف شد؛ در حال همگام‌سازی با ابر...';
         }
       });
       actions.append(edit, remove);
@@ -2527,7 +2832,9 @@ function loadLessonLibrary() {
       ...item,
       tags: Array.isArray(item.tags) ? item.tags.filter((tag) => typeof tag === 'string').slice(0, 20) : [],
     }));
+    invalidCentralLocalStorage.delete('lesson_library');
   } catch (error) {
+    invalidCentralLocalStorage.add('lesson_library');
     lessonLibrary = [];
     lessonLibraryStatus.textContent = 'خواندن کتابخانه ناموفق بود؛ داده‌های قدیمی تغییر نکردند.';
   }
@@ -2559,7 +2866,7 @@ lessonLibraryForm?.addEventListener('submit', (event) => {
     }, ...lessonLibrary];
   }
   if (saveLessonLibrary(next)) {
-    lessonLibraryStatus.textContent = lessonLibraryEditingId ? 'تغییرات نکته ذخیره شد.' : 'نکته به کتابخانه اضافه شد.';
+    lessonLibraryStatus.textContent = lessonLibraryEditingId ? 'تغییرات نکته ذخیره شد؛ در حال همگام‌سازی با ابر...' : 'نکته اضافه شد؛ در حال همگام‌سازی با ابر...';
     lessonLibraryEditingId = '';
     lessonLibraryForm.reset();
     lessonLibrarySaveButton.textContent = 'افزودن به کتابخانه';
@@ -2854,10 +3161,13 @@ dailyCheckinForm?.addEventListener('submit', (event) => {
     return;
   }
   try {
+    const previous = state.dailyCheckins;
     const next = [...state.dailyCheckins.filter((item) => item.date !== record.date), record];
     localStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(next));
+    invalidCentralLocalStorage.delete('checkins');
     state.dailyCheckins = next;
-    checkinLocalNote.textContent = 'چک‌این فقط روی همین مرورگر ذخیره شد؛ با فضای ابری همگام نمی‌شود.';
+    checkinLocalNote.textContent = 'چک‌این روی همین دستگاه ذخیره شد؛ در حال همگام‌سازی ابری...';
+    queueCentralCollectionSync('checkins', previous, next, checkinLocalNote, 'چک‌این روزانه');
     renderDailyCheckin();
   } catch (error) {
     checkinLocalNote.textContent = 'ذخیرهٔ چک‌این ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
@@ -3017,16 +3327,39 @@ async function hydrateApp() {
     state.dailyCheckins = loadDailyCheckins();
   } catch (error) {
     state.dailyCheckins = [];
+    invalidCentralLocalStorage.add('checkins');
     checkinLocalNote.textContent = 'خواندن چک‌این‌های قبلی ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
   }
   loadTradingProfile();
   loadPersonalRules();
   loadLessonLibrary();
   const pendingLocalTrades = readLocalTrades();
+  if (!state.remoteEnabled) {
+    tradeBaselineReady = true;
+  } else if (localStorage.getItem(TRADE_BASELINE_STORAGE_KEY) === null) {
+    try {
+      localStorage.setItem(TRADE_BASELINE_STORAGE_KEY, JSON.stringify(pendingLocalTrades.map((trade) => String(trade.id || '')).filter(Boolean)));
+      tradeBaselineReady = true;
+    } catch (error) {
+      checkinLocalNote.textContent = 'ثبت وضعیت اولیهٔ معاملات انجام نشد؛ برای جلوگیری از انتقال ناخواستهٔ معاملات قدیمی، همگام‌سازی معامله‌ها متوقف می‌شود.';
+    }
+  } else {
+    try {
+      storedTradeIds(TRADE_BASELINE_STORAGE_KEY);
+      tradeBaselineReady = true;
+    } catch (error) {
+      checkinLocalNote.textContent = error.message;
+    }
+  }
   const serverTrades = await fetchServerTrades();
-  if (Array.isArray(serverTrades) && (serverTrades.length || state.remoteEnabled)) {
-    state.trades = serverTrades;
-    saveLocalTrades(serverTrades);
+  if (Array.isArray(serverTrades)) {
+    if (tradeBaselineReady) {
+      establishTradeSyncBaseline(pendingLocalTrades, serverTrades);
+      state.trades = mergeCloudAndDeferredTrades(serverTrades, pendingLocalTrades);
+    } else {
+      state.trades = pendingLocalTrades;
+    }
+    saveLocalTrades(state.trades);
   } else {
     state.trades = pendingLocalTrades;
   }
@@ -3040,14 +3373,23 @@ async function hydrateApp() {
       ? `${coachingSessions.length} جلسه از فضای ذخیره‌سازی مشترک بارگذاری شد.`
       : 'جلسه‌ها هنوز در فضای ذخیره‌سازی مشترک ثبت نشده‌اند.';
   } catch (error) {
-    coachSessionStatus.textContent = `${error.message} برای ذخیرهٔ دائمی، جدول Supabase را مطابق فایل SQL پروژه بساز.`;
+    coachSessionStatus.textContent = `${error.message} وضعیت اتصال Cloudflare و پایگاه D1 را بررسی کن.`;
   }
-  syncLocalTradesToServer(pendingLocalTrades);
+  try {
+    await syncCentralRecords();
+  } catch (error) {
+    console.error('Cloud journal coaching data sync failed:', error.message);
+  }
+  syncLocalTradesToServer();
   window.setInterval(() => {
     if (!document.hidden) syncLocalTradesToServer();
   }, 20000);
+  window.setInterval(() => {
+    if (!document.hidden) syncCentralRecords().catch((error) => console.error('Cloud journal coaching data sync failed:', error.message));
+  }, 30000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) syncLocalTradesToServer();
+    if (!document.hidden) syncCentralRecords().catch((error) => console.error('Cloud journal coaching data sync failed:', error.message));
   });
 }
 

@@ -45,33 +45,86 @@ function requiredCollection(name) {
   return COLLECTIONS.has(name);
 }
 
-async function requireAccess(request, env) {
-  if (!env.JOURNAL_ACCESS_KEY) return json({ message: 'دسترسی امن هنوز در Cloudflare تنظیم نشده است.' }, 503);
-  const supplied = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-  const encoder = new TextEncoder();
-  const [expectedHash, suppliedHash] = await Promise.all([
-    crypto.subtle.digest('SHA-256', encoder.encode(env.JOURNAL_ACCESS_KEY)),
-    crypto.subtle.digest('SHA-256', encoder.encode(supplied)),
-  ]);
-  const expectedBytes = new Uint8Array(expectedHash);
-  const suppliedBytes = new Uint8Array(suppliedHash);
+function bytesToHex(bytes) {
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function constantTimeEqual(left, right) {
+  if (left.length !== right.length) return false;
   let difference = 0;
-  for (let index = 0; index < expectedBytes.length; index += 1) difference |= expectedBytes[index] ^ suppliedBytes[index];
-  if (difference !== 0) return json({ message: 'کلید دسترسی وارد نشده یا درست نیست.' }, 401);
-  return null;
+  for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  return difference === 0;
 }
 
-async function readTrades(env, limit = 1000) {
+async function telegramHmac(keyBytes, value) {
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value)));
+}
+
+async function authenticateTelegram(request, env) {
+  if (!env.TELEGRAM_BOT_TOKEN) return { error: json({ message: 'مینی‌اپ هنوز به توکن ربات تلگرام متصل نشده است.' }, 503) };
+  const authorization = request.headers.get('Authorization') || '';
+  const initData = authorization.startsWith('tma ') ? authorization.slice(4) : '';
+  if (!initData || initData.length > 16_384) return { error: json({ message: 'این ژورنال فقط از داخل مینی‌اپ تلگرام قابل استفاده است.' }, 401) };
+
+  const params = new URLSearchParams(initData);
+  const receivedHash = params.get('hash') || '';
+  const authDate = Number(params.get('auth_date'));
+  if (!/^[\da-f]{64}$/i.test(receivedHash) || !Number.isInteger(authDate)) {
+    return { error: json({ message: 'اطلاعات ورود تلگرام معتبر نیست؛ مینی‌اپ را دوباره باز کن.' }, 401) };
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (authDate > nowSeconds + 30 || nowSeconds - authDate > 86_400) {
+    return { error: json({ message: 'اطلاعات ورود تلگرام منقضی شده؛ مینی‌اپ را دوباره باز کن.' }, 401) };
+  }
+
+  params.delete('hash');
+  params.delete('signature');
+  const dataCheckString = [...params.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  const secretKey = await telegramHmac(new TextEncoder().encode('WebAppData'), env.TELEGRAM_BOT_TOKEN);
+  const expectedHash = bytesToHex(await telegramHmac(secretKey, dataCheckString));
+  if (!constantTimeEqual(expectedHash, receivedHash.toLowerCase())) {
+    return { error: json({ message: 'امضای تلگرام تأیید نشد؛ فقط از دکمهٔ خود ربات وارد شو.' }, 401) };
+  }
+
+  let user;
+  try {
+    user = JSON.parse(params.get('user') || 'null');
+  } catch {
+    return { error: json({ message: 'اطلاعات حساب تلگرام قابل خواندن نیست.' }, 401) };
+  }
+  if (!user || !/^\d{1,20}$/.test(String(user.id || ''))) {
+    return { error: json({ message: 'شناسهٔ کاربر تلگرام در اطلاعات ورود وجود ندارد.' }, 401) };
+  }
+  return { userId: String(user.id), user: { id: String(user.id), firstName: String(user.first_name || '').slice(0, 100) } };
+}
+
+function scopedRecordId(userId, id) {
+  return `${userId}:${String(id).slice(0, 170)}`;
+}
+
+function scopedIdPrefix(userId) {
+  return `${userId}:`;
+}
+
+async function readTrades(env, userId, limit = 1000) {
   const result = await env.DB.prepare(
-    'SELECT id, updated_at, payload FROM journal_trades WHERE deleted = 0 ORDER BY updated_at DESC LIMIT ?',
-  ).bind(limit).all();
-  return (result.results || []).map((row) => ({ ...parseJson(row.payload, {}), id: row.id }));
+    'SELECT id, updated_at, payload FROM journal_trades WHERE deleted = 0 AND id LIKE ? ORDER BY updated_at DESC LIMIT ?',
+  ).bind(`${scopedIdPrefix(userId)}%`, limit).all();
+  return (result.results || []).map((row) => {
+    const trade = parseJson(row.payload, {});
+    return { ...trade, id: trade.id || row.id.slice(scopedIdPrefix(userId).length) };
+  });
 }
 
-async function upsertTrade(env, trade) {
-  const id = String(trade.id || `trade_${crypto.randomUUID()}`).slice(0, 200);
+async function upsertTrade(env, userId, trade) {
+  const publicId = String(trade.id || `trade_${crypto.randomUUID()}`).slice(0, 170);
+  const id = scopedRecordId(userId, publicId);
   const updatedAt = String(trade.updatedAt || new Date().toISOString());
-  const saved = { ...trade, id, updatedAt };
+  const saved = { ...trade, id: publicId, updatedAt };
   await env.DB.prepare(`
     INSERT INTO journal_trades (id, updated_at, deleted, payload)
     VALUES (?, ?, 0, ?)
@@ -85,17 +138,18 @@ async function upsertTrade(env, trade) {
   return parseJson(row?.payload, saved);
 }
 
-async function saveCentralRecord(env, collection, record) {
+async function saveCentralRecord(env, userId, collection, record) {
   if (!record || typeof record !== 'object' || Array.isArray(record) || !String(record.id || '').trim()) {
     return { error: json({ message: 'شناسهٔ رکورد لازم است.' }, 400) };
   }
   const now = new Date().toISOString();
-  const id = String(record.id).slice(0, 200);
+  const publicId = String(record.id).slice(0, 170);
+  const id = scopedRecordId(userId, publicId);
   const existing = await env.DB.prepare(
     'SELECT created_at FROM coach_records WHERE collection = ? AND id = ?',
   ).bind(collection, id).first();
   const createdAt = existing?.created_at || String(record.createdAt || now);
-  const saved = { ...record, id, createdAt, updatedAt: now };
+  const saved = { ...record, id: publicId, createdAt, updatedAt: now };
   await env.DB.prepare(`
     INSERT INTO coach_records (collection, id, created_at, updated_at, payload)
     VALUES (?, ?, ?, ?, ?)
@@ -374,7 +428,7 @@ async function handleCryptoMarket(request, env, url) {
   return json({ error: 'این مسیر بازار پشتیبانی نمی‌شود.' }, 404);
 }
 
-async function geminiChat(request, env) {
+async function geminiChat(request, env, userId) {
   if (!env.GEMINI_API_KEY) return json({ message: 'کلید Gemini هنوز در Cloudflare تنظیم نشده است.' }, 503);
   let body;
   try {
@@ -386,14 +440,14 @@ async function geminiChat(request, env) {
   if (!message) return json({ message: 'پیام خالی است.' }, 400);
   if (message.length > 3000) return json({ message: 'پیام بیش از حد طولانی است؛ کوتاه‌ترش کن.' }, 400);
 
-  const trades = await readTrades(env, 1000);
+  const trades = await readTrades(env, userId, 1000);
   const recentTrades = trades.slice(0, 100);
   const recordRows = await env.DB.prepare(`
     SELECT collection, payload FROM coach_records
-    WHERE collection IN ('checkins', 'personal_rules', 'assignments', 'contracts',
+    WHERE id LIKE ? AND collection IN ('checkins', 'personal_rules', 'assignments', 'contracts',
       'lesson_library', 'memories', 'monthly_summaries')
     ORDER BY updated_at DESC LIMIT 200
-  `).all();
+  `).bind(`${scopedIdPrefix(userId)}%`).all();
   const coachRecords = (recordRows.results || []).map((row) => ({
     collection: row.collection,
     ...parseJson(row.payload, {}),
@@ -525,21 +579,21 @@ function workerTradePnl(trade) {
   return 0;
 }
 
-async function readCoachSessions(env) {
+async function readCoachSessions(env, userId) {
   const { results } = await env.DB.prepare(`
     SELECT id, created_at, updated_at, payload FROM coach_records
-    WHERE collection = 'coaching_sessions' ORDER BY updated_at DESC LIMIT 1000
-  `).all();
+    WHERE collection = 'coaching_sessions' AND id LIKE ? ORDER BY updated_at DESC LIMIT 1000
+  `).bind(`${scopedIdPrefix(userId)}%`).all();
   return (results || []).map((row) => ({
     ...parseJson(row.payload, {}),
-    id: row.id,
+    id: parseJson(row.payload, {}).id || row.id.slice(scopedIdPrefix(userId).length),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
 }
 
-async function saveCoachSession(env, session) {
-  const saved = await saveCentralRecord(env, 'coaching_sessions', session);
+async function saveCoachSession(env, userId, session) {
+  const saved = await saveCentralRecord(env, userId, 'coaching_sessions', session);
   if (saved.error) throw new Error('ساختار جلسه معتبر نیست.');
   return saved.record;
 }
@@ -640,7 +694,7 @@ async function handleTradeLookup(request, env) {
   return json({ found: Boolean(result.token || result.entryMarketCap || result.openedAt), ...result });
 }
 
-async function handleCoachQuickReview(request, env) {
+async function handleCoachQuickReview(request, env, userId) {
   let body;
   try { body = await request.json(); } catch { return json({ message: 'متن درخواست معتبر نیست.' }, 400); }
   const { kind, answers } = body || {};
@@ -652,7 +706,7 @@ async function handleCoachQuickReview(request, env) {
     : ['whatHappened', 'feeling', 'nextStep'];
   const safeAnswers = Object.fromEntries(fields.map((field) => [field, String(answers[field] || '').trim().slice(0, 2000)]));
   if (fields.some((field) => !safeAnswers[field])) return json({ message: 'برای مرور، پرسش‌های کوتاه را پاسخ بده.' }, 400);
-  const trades = await readTrades(env);
+  const trades = await readTrades(env, userId);
   const recentTrades = trades.slice().sort((a, b) => String(b.closedAt || b.openedAt || b.journalDate || '').localeCompare(String(a.closedAt || a.openedAt || a.journalDate || ''))).slice(0, 12);
   const system = [
     'تو مربی خودآگاهی ترید فارسی‌زبان، صریح و محترم هستی؛ درمان‌گر یا مشاور مالی نیستی.',
@@ -675,8 +729,8 @@ async function handleCoachQuickReview(request, env) {
   }
 }
 
-async function handleRuleSuggestions(env) {
-  const trades = await readTrades(env);
+async function handleRuleSuggestions(env, userId) {
+  const trades = await readTrades(env, userId);
   const losses = trades.filter((trade) => trade.status === 'closed' && workerTradePnl(trade) < 0)
     .sort((a, b) => String(b.closedAt || b.openedAt || b.journalDate || '').localeCompare(String(a.closedAt || a.openedAt || a.journalDate || '')))
     .slice(0, 100)
@@ -727,8 +781,8 @@ async function handleRuleSuggestions(env) {
   }
 }
 
-async function handleCoachProfile(env) {
-  const [trades, sessions] = await Promise.all([readTrades(env), readCoachSessions(env)]);
+async function handleCoachProfile(env, userId) {
+  const [trades, sessions] = await Promise.all([readTrades(env, userId), readCoachSessions(env, userId)]);
   const recentTrades = trades.slice(0, 100).map((trade) => ({
     id: trade.id, token: trade.token, date: trade.journalDate || trade.openedAt, status: trade.status,
     result: trade.status === 'closed' ? workerTradePnl(trade) : null,
@@ -757,10 +811,10 @@ async function handleCoachProfile(env) {
   }
 }
 
-async function handleCoachSessionStart(env, request) {
+async function handleCoachSessionStart(env, request, userId) {
   const body = await request.json().catch(() => ({}));
   const style = body.style === 'direct' ? 'direct' : 'supportive';
-  const [trades, sessions] = await Promise.all([readTrades(env), readCoachSessions(env)]);
+  const [trades, sessions] = await Promise.all([readTrades(env, userId), readCoachSessions(env, userId)]);
   try {
     const result = await generateGemini(env, {
       system: `تو مربی خودآگاهی ترید به سبک ${style === 'direct' ? 'رک و سخت‌گیر اما محترم' : 'آرام و حمایتی اما صادق'} هستی. جلسه را با خوش‌آمد کوتاه و دقیقاً پنج سؤال ساختاریافته درباره داده‌های هفت روز اخیر و قول‌های قبلی شروع کن. کمبود داده را بگو؛ کمتر از ۳۰ معامله یعنی داده هنوز کمه. فقط JSON با greeting و questions (دقیقاً ۵ رشته) برگردان.`,
@@ -776,13 +830,13 @@ async function handleCoachSessionStart(env, request) {
   }
 }
 
-async function handleCoachSessionReply(env, request) {
+async function handleCoachSessionReply(env, request, userId) {
   const body = await request.json().catch(() => ({}));
   const messages = Array.isArray(body.messages) ? body.messages.slice(-24)
     .filter((item) => ['user', 'assistant'].includes(item?.role) && typeof item.content === 'string')
     .map((item) => ({ role: item.role, content: item.content.slice(0, 4000) })) : [];
   if (!messages.length || messages.at(-1).role !== 'user') return json({ message: 'پاسخ کاربر برای ادامهٔ جلسه لازم است.' }, 400);
-  const [trades, sessions] = await Promise.all([readTrades(env), readCoachSessions(env)]);
+  const [trades, sessions] = await Promise.all([readTrades(env, userId), readCoachSessions(env, userId)]);
   const context = await workerCoachContext(env, trades, sessions);
   try {
     const reply = await generateGemini(env, {
@@ -796,7 +850,7 @@ async function handleCoachSessionReply(env, request) {
   }
 }
 
-async function handleCoachSessionFinish(env, request) {
+async function handleCoachSessionFinish(env, request, userId) {
   const body = await request.json().catch(() => ({}));
   const messages = Array.isArray(body.messages) ? body.messages.slice(-40)
     .filter((item) => ['user', 'assistant'].includes(item?.role) && typeof item.content === 'string')
@@ -818,8 +872,8 @@ async function handleCoachSessionFinish(env, request) {
   }
 }
 
-async function handleReport(env) {
-  const trades = await readTrades(env);
+async function handleReport(env, userId) {
+  const trades = await readTrades(env, userId);
   const signals = [
     { label: 'ترس', regex: /ترس|می‌ترسیدم|ترسیدم|fear/gi },
     { label: 'طمع', regex: /طمع|حریص|greed/gi },
@@ -944,6 +998,8 @@ async function routeApi(request, env, url) {
     return json({
       remoteEnabled: true,
       centralDatabaseEnabled: true,
+      telegramMiniApp: true,
+      telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN),
       aiEnabled: Boolean(env.GEMINI_API_KEY),
       aiChatConfigured: Boolean(env.GEMINI_API_KEY),
       aiReportConfigured: Boolean(env.GEMINI_API_KEY),
@@ -956,8 +1012,13 @@ async function routeApi(request, env, url) {
     });
   }
 
-  const authError = await requireAccess(request, env);
-  if (authError) return authError;
+  const auth = await authenticateTelegram(request, env);
+  if (auth.error) return auth.error;
+  const { userId, user } = auth;
+
+  if (url.pathname === '/api/me' && request.method === 'GET') {
+    return json({ user });
+  }
 
   if (url.pathname === '/api/migration/status' && request.method === 'GET') {
     const [tradeCounts, coachCounts] = await Promise.all([
@@ -965,9 +1026,10 @@ async function routeApi(request, env, url) {
         SELECT
           SUM(CASE WHEN deleted = 0 THEN 1 ELSE 0 END) AS active,
           SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END) AS deleted
-        FROM journal_trades
-      `).first(),
-      env.DB.prepare('SELECT COUNT(*) AS total FROM coach_records').first(),
+        FROM journal_trades WHERE id LIKE ?
+      `).bind(`${scopedIdPrefix(userId)}%`).first(),
+      env.DB.prepare('SELECT COUNT(*) AS total FROM coach_records WHERE id LIKE ?')
+        .bind(`${scopedIdPrefix(userId)}%`).first(),
     ]);
     return json({
       trades: { active: Number(tradeCounts?.active || 0), deleted: Number(tradeCounts?.deleted || 0) },
@@ -976,51 +1038,17 @@ async function routeApi(request, env, url) {
   }
 
   if (url.pathname === '/api/migration/import' && request.method === 'POST') {
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ message: 'متن درخواست معتبر نیست.' }, 400);
-    }
-    if (!Array.isArray(body?.trades) || body.trades.length < 1 || body.trades.length > 25) {
-      return json({ message: 'هر بسته باید بین ۱ تا ۲۵ معامله داشته باشد.' }, 400);
-    }
-    const encodedTrades = body.trades.map((trade) => JSON.stringify(trade));
-    if (encodedTrades.some((trade) => trade.length > 500_000) || encodedTrades.reduce((sum, trade) => sum + trade.length, 0) > 500_000) {
-      return json({ message: 'حجم بسته بیش از حد مجاز است؛ تعداد معاملات این بسته را کم کن.' }, 413);
-    }
-    for (const trade of body.trades) {
-      if (!trade || typeof trade !== 'object' || Array.isArray(trade)
-        || !String(trade.id || '').trim() || String(trade.id).length > 200 || !String(trade.token || '').trim()) {
-        return json({ message: 'همهٔ معاملات باید شناسه و نام توکن داشته باشند؛ هیچ داده‌ای از این بسته وارد نشد.' }, 400);
-      }
-    }
-
-    let inserted = 0;
-    let skipped = 0;
-    for (const trade of body.trades) {
-      const id = String(trade.id).slice(0, 200);
-      const updatedAt = String(trade.updatedAt || trade.createdAt || trade.openedAt || new Date().toISOString());
-      const saved = { ...trade, id, updatedAt };
-      const result = await env.DB.prepare(`
-        INSERT INTO journal_trades (id, updated_at, deleted, payload)
-        VALUES (?, ?, 0, ?)
-        ON CONFLICT(id) DO NOTHING
-      `).bind(id, updatedAt, JSON.stringify(saved)).run();
-      if (Number(result.meta?.changes || 0) > 0) inserted += 1;
-      else skipped += 1;
-    }
-    return json({ ok: true, inserted, skipped });
+    return json({ message: 'انتقال معامله‌های قدیمی به مینی‌اپ غیرفعال است.' }, 410);
   }
 
-  if (url.pathname === '/api/ai/chat' && request.method === 'POST') return geminiChat(request, env);
-  if (url.pathname === '/api/ai/report' && request.method === 'POST') return handleReport(env);
-  if (url.pathname === '/api/coach/quick-review' && request.method === 'POST') return handleCoachQuickReview(request, env);
-  if (url.pathname === '/api/coach/rules/suggest' && request.method === 'POST') return handleRuleSuggestions(env);
-  if (url.pathname === '/api/coach/profile' && request.method === 'POST') return handleCoachProfile(env);
-  if (url.pathname === '/api/coach/session/start' && request.method === 'POST') return handleCoachSessionStart(env, request);
-  if (url.pathname === '/api/coach/session/reply' && request.method === 'POST') return handleCoachSessionReply(env, request);
-  if (url.pathname === '/api/coach/session/finish' && request.method === 'POST') return handleCoachSessionFinish(env, request);
+  if (url.pathname === '/api/ai/chat' && request.method === 'POST') return geminiChat(request, env, userId);
+  if (url.pathname === '/api/ai/report' && request.method === 'POST') return handleReport(env, userId);
+  if (url.pathname === '/api/coach/quick-review' && request.method === 'POST') return handleCoachQuickReview(request, env, userId);
+  if (url.pathname === '/api/coach/rules/suggest' && request.method === 'POST') return handleRuleSuggestions(env, userId);
+  if (url.pathname === '/api/coach/profile' && request.method === 'POST') return handleCoachProfile(env, userId);
+  if (url.pathname === '/api/coach/session/start' && request.method === 'POST') return handleCoachSessionStart(env, request, userId);
+  if (url.pathname === '/api/coach/session/reply' && request.method === 'POST') return handleCoachSessionReply(env, request, userId);
+  if (url.pathname === '/api/coach/session/finish' && request.method === 'POST') return handleCoachSessionFinish(env, request, userId);
   if (url.pathname === '/api/ai/test/chat' && request.method === 'POST') {
     try {
       await generateGemini(env, { messages: [{ role: 'user', content: 'پاسخ بده: اتصال موفق است.' }], temperature: 0 });
@@ -1053,7 +1081,7 @@ async function routeApi(request, env, url) {
   }
 
   if (url.pathname === '/api/coach/sessions' && request.method === 'GET') {
-    return json({ sessions: await readCoachSessions(env) });
+    return json({ sessions: await readCoachSessions(env, userId) });
   }
   if (url.pathname === '/api/coach/sessions' && request.method === 'POST') {
     let session;
@@ -1087,7 +1115,7 @@ async function routeApi(request, env, url) {
       homework: String(session.homework || '').slice(0, 3000),
       followUp: String(session.followUp || '').slice(0, 3000),
     };
-    return json({ session: await saveCoachSession(env, safeSession) });
+    return json({ session: await saveCoachSession(env, userId, safeSession) });
   }
 
   if (url.pathname === '/api/push/subscribe' && request.method === 'POST') {
@@ -1102,11 +1130,11 @@ async function routeApi(request, env, url) {
     if (request.method === 'GET' && !encodedId) {
       const { results } = await env.DB.prepare(`
         SELECT id, created_at, updated_at, payload FROM coach_records
-        WHERE collection = ? ORDER BY updated_at DESC LIMIT 5000
-      `).bind(collection).all();
+        WHERE collection = ? AND id LIKE ? ORDER BY updated_at DESC LIMIT 5000
+      `).bind(collection, `${scopedIdPrefix(userId)}%`).all();
       return json({ collection, records: (results || []).map((row) => ({
         ...parseJson(row.payload, {}),
-        id: row.id,
+        id: parseJson(row.payload, {}).id || row.id.slice(scopedIdPrefix(userId).length),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       })) });
@@ -1119,21 +1147,21 @@ async function routeApi(request, env, url) {
         return json({ message: 'متن درخواست معتبر نیست.' }, 400);
       }
       if (JSON.stringify(body?.record || {}).length > 100_000) return json({ message: 'این داده بیش از حد طولانی است.' }, 413);
-      const result = await saveCentralRecord(env, collection, body?.record);
+      const result = await saveCentralRecord(env, userId, collection, body?.record);
       return result.error || json({ collection, record: result.record }, 201);
     }
     if (request.method === 'DELETE' && encodedId) {
       await env.DB.prepare('DELETE FROM coach_records WHERE collection = ? AND id = ?')
-        .bind(collection, decodeURIComponent(encodedId)).run();
+        .bind(collection, scopedRecordId(userId, decodeURIComponent(encodedId))).run();
       return json({ ok: true, collection });
     }
   }
 
   if (url.pathname === '/api/trades' && request.method === 'GET') {
-    return json({ trades: await readTrades(env) });
+    return json({ trades: await readTrades(env, userId) });
   }
   if (url.pathname === '/api/summary' && request.method === 'GET') {
-    const trades = await readTrades(env);
+    const trades = await readTrades(env, userId);
     const closed = trades.filter((trade) => trade.status === 'closed');
     const wins = closed.filter((trade) => workerTradePnl(trade) > 0).length;
     const losses = closed.filter((trade) => workerTradePnl(trade) < 0).length;
@@ -1159,7 +1187,7 @@ async function routeApi(request, env, url) {
     }
     if (!String(trade?.token || '').trim()) return json({ message: 'نام توکن لازم است.' }, 400);
     if (JSON.stringify(trade).length > 1_000_000) return json({ message: 'حجم معامله بیش از حد مجاز است.' }, 413);
-    const saved = await upsertTrade(env, trade);
+    const saved = await upsertTrade(env, userId, trade);
     return json({ trade: saved }, 201);
   }
 
@@ -1167,7 +1195,8 @@ async function routeApi(request, env, url) {
   if (tradeMatch) {
     const id = decodeURIComponent(tradeMatch[1]);
     if (request.method === 'PUT') {
-      const existing = await env.DB.prepare('SELECT payload FROM journal_trades WHERE id = ? AND deleted = 0').bind(id).first();
+      const storageId = scopedRecordId(userId, id);
+      const existing = await env.DB.prepare('SELECT payload FROM journal_trades WHERE id = ? AND deleted = 0').bind(storageId).first();
       if (!existing) return json({ message: 'معامله پیدا نشد.' }, 404);
       let updates;
       try {
@@ -1175,13 +1204,13 @@ async function routeApi(request, env, url) {
       } catch {
         return json({ message: 'متن درخواست معتبر نیست.' }, 400);
       }
-      const saved = await upsertTrade(env, { ...parseJson(existing.payload, {}), ...updates, id });
+      const saved = await upsertTrade(env, userId, { ...parseJson(existing.payload, {}), ...updates, id });
       return json({ trade: saved });
     }
     if (request.method === 'DELETE') {
       const now = new Date().toISOString();
       await env.DB.prepare('UPDATE journal_trades SET deleted = 1, updated_at = ? WHERE id = ?')
-        .bind(now, id).run();
+        .bind(now, scopedRecordId(userId, id)).run();
       return json({ ok: true, id });
     }
   }
@@ -1196,7 +1225,7 @@ async function routeApi(request, env, url) {
     const trades = Array.isArray(body) ? body : (Array.isArray(body.trades) ? body.trades : []);
     const deletions = Array.isArray(body?.deleted) ? body.deleted : [];
     for (const trade of trades) {
-      if (trade && trade.id && String(trade.token || '').trim()) await upsertTrade(env, trade);
+      if (trade && trade.id && String(trade.token || '').trim()) await upsertTrade(env, userId, trade);
     }
     for (const deletion of deletions) {
       if (!deletion?.id) continue;
@@ -1206,9 +1235,9 @@ async function routeApi(request, env, url) {
         VALUES (?, ?, 1, '{}')
         ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, deleted = 1, payload = '{}'
         WHERE excluded.updated_at >= journal_trades.updated_at
-      `).bind(String(deletion.id), now).run();
+      `).bind(scopedRecordId(userId, deletion.id), now).run();
     }
-    return json({ ok: true, trades: await readTrades(env) });
+    return json({ ok: true, trades: await readTrades(env, userId) });
   }
 
   return json({ message: 'این مسیر هنوز به‌صورت امن به Cloudflare منتقل نشده است.' }, 501);
