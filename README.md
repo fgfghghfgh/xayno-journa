@@ -1,6 +1,6 @@
 # XAYNO Journal Web
 
-The web and desktop real-trade journals use the same trade fields and can sync through a private Render API backed by Supabase. Each device also retains its own local copy for offline use.
+The web and desktop real-trade journals use the same trade fields and can sync through a private API. Each device also retains its own local copy for offline use.
 
 ## Run locally
 
@@ -44,10 +44,31 @@ Then open:
 3. OpenAI-compatible variables remain supported as fallback. Keep every API key only in the server environment, never in the browser or desktop source.
 4. Central coach records use `/api/central/:collection` and require the same private `JOURNAL_ACCESS_KEY`.
 
+### Cloudflare Workers + D1
+
+The Cloudflare Worker backend is in [cloudflare/worker.js](cloudflare/worker.js), and its D1 schema is in [cloudflare/migrations/0001_init.sql](cloudflare/migrations/0001_init.sql). It is deployed at https://xayno-journal-api.seyed-rasool2017.workers.dev. The existing Render/Express backend and its data remain untouched; the Cloudflare D1 database must be populated from the old journal before switching other clients to it.
+
+The deployed Worker serves the web app and its `/api/*` routes. Health and configuration checks are available at `/api/health` and `/api/config`. The Gemini API key and journal access key are server-only Cloudflare secrets. Chat and reports are configured; chart requests remain disabled until `BIRDEYE_API_KEY` is added, and push notifications are not implemented on this Worker.
+
+#### Non-destructive trade migration
+
+Run `node scripts/migrate-render-to-cloudflare.js` from this project directory in an interactive PowerShell or VS Code terminal. Enter the existing Render `JOURNAL_ACCESS_KEY` only when prompted; input is hidden and the script never prints the key or trade contents. It combines Render trades, `data/trades.json` if present, and an optional desktop JSON backup, keeping the newest version of duplicate IDs. After showing source counts, the script asks for `IMPORT`; confirmation also replaces the Cloudflare `JOURNAL_ACCESS_KEY` with the same Render key, so there is no second key to copy. It inserts trades into D1 in small batches, skips matching IDs without overwriting existing Cloudflare records, then verifies the destination count. Render and local source data are never deleted. If the run is interrupted, rerunning it is safe; already imported trade IDs are skipped. This migrates trades only; coach records must be migrated separately before retiring their old storage.
+
+To reproduce or update the Cloudflare deployment:
+
+1. Install Wrangler locally with `npm install --save-dev wrangler`.
+2. From this project folder, run `npx wrangler login`, then `npx wrangler d1 create xayno-journal`.
+3. Copy the `database_id` from Wrangler's output into `wrangler.toml`.
+4. Apply the schema with `npx wrangler d1 migrations apply xayno-journal --remote`.
+5. Add server-only secrets with `npx wrangler secret put GEMINI_API_KEY` and `npx wrangler secret put JOURNAL_ACCESS_KEY`.
+6. Deploy with `npx wrangler deploy`.
+
+`GEMINI_CHAT_MODEL` and `GEMINI_REPORT_MODEL` are ordinary server-side model settings in `wrangler.toml`; API keys are secrets and must never be added there or to browser code. The Supabase SQL schema is separate and is not used by D1.
+
 Generate a private journal key locally with:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Without all three Render environment variables, production API writes are rejected rather than being presented as durable cloud sync. Render's free service filesystem is not a shared persistent database.
+Render's free service filesystem is not a shared persistent database. Keep the existing Render service and database until a verified migration to D1 is complete.

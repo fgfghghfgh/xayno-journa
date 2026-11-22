@@ -1,0 +1,18 @@
+name = "xayno-journal-api"
+main = "cloudflare/worker.js"
+compatibility_date = "2026-11-22"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "xayno-journal"
+database_id = "2f781de6-2274-4e7e-8c89-90f6c95b00fe"
+migrations_dir = "cloudflare/migrations"
+
+[vars]
+GEMINI_CHAT_MODEL = "gemini-2.5-flash-lite"
+GEMINI_REPORT_MODEL = "gemini-2.5-flash"
