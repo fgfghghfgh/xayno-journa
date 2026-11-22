@@ -5,6 +5,7 @@ const CHECKIN_STORAGE_KEY = 'xayno-daily-checkins-v1';
 const TRADING_PROFILE_STORAGE_KEY = 'xayno-trading-profile-v1';
 const PERSONAL_RULES_STORAGE_KEY = 'xayno-personal-trading-rules-v1';
 const LESSON_LIBRARY_STORAGE_KEY = 'xayno-lesson-library-v1';
+const LESSON_REVIEWS_STORAGE_KEY = 'xayno-lesson-reviews-v1';
 const CENTRAL_TOMBSTONES_STORAGE_KEY = 'xayno-central-record-tombstones-v1';
 const TRADING_PROFILE_CATEGORIES = [
   ['triggers', 'محرک‌های احساسی'],
@@ -129,6 +130,9 @@ const lessonLibrarySaveButton = document.getElementById('lessonLibrarySaveBtn');
 const lessonLibraryCancelButton = document.getElementById('lessonLibraryCancelBtn');
 const lessonLibraryStatus = document.getElementById('lessonLibraryStatus');
 const lessonLibraryList = document.getElementById('lessonLibraryList');
+const lessonReviewStatus = document.getElementById('lessonReviewStatus');
+const lessonReviewList = document.getElementById('lessonReviewList');
+const lessonReviewStartButton = document.getElementById('lessonReviewStart');
 const preTradeCheck = document.getElementById('preTradeCheck');
 const preTradeWhy = document.getElementById('preTradeWhy');
 const preTradeStop = document.getElementById('preTradeStop');
@@ -187,6 +191,7 @@ let personalRuleSuggestions = [];
 let personalRulesBusy = false;
 let personalRules = [];
 let lessonLibrary = [];
+let lessonReviews = [];
 let lessonLibraryEditingId = '';
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
@@ -1115,6 +1120,11 @@ function centralCollectionSpecs() {
       write: (records) => { lessonLibrary = records; renderLessonLibrary(); },
     },
     {
+      collection: 'lesson_reviews',
+      read: () => lessonReviews,
+      write: (records) => { lessonReviews = records; renderLessonLibrary(); },
+    },
+    {
       collection: 'memories',
       read: () => tradingProfile ? [{ ...tradingProfile, id: 'trading_profile' }] : [],
       write: (records) => {
@@ -1216,6 +1226,7 @@ async function syncCentralRecordsOnce() {
       checkins: CHECKIN_STORAGE_KEY,
       personal_rules: PERSONAL_RULES_STORAGE_KEY,
       lesson_library: LESSON_LIBRARY_STORAGE_KEY,
+      lesson_reviews: LESSON_REVIEWS_STORAGE_KEY,
       memories: TRADING_PROFILE_STORAGE_KEY,
     }[spec.collection];
     if (invalidCentralLocalStorage.has(spec.collection)) continue;
@@ -1246,7 +1257,7 @@ function syncCentralRecords() {
       if (checkinLocalNote) {
         checkinLocalNote.textContent = invalidCentralLocalStorage.size
           ? 'داده‌های معتبر با فضای ابری همگام شدند؛ موارد محلیِ ناخوانا دست‌نخورده باقی ماندند.'
-          : 'چک‌این‌ها، قوانین، درس‌ها و نقشهٔ شخصیت با فضای ابری همگام شدند.';
+          : 'چک‌این‌ها، قوانین، درس‌ها، مرورهای نکته و نقشهٔ شخصیت با فضای ابری همگام شدند.';
       }
     } catch (error) {
       if (checkinLocalNote) checkinLocalNote.textContent = `${error.message} داده‌های روی این دستگاه حفظ شدند و بعداً دوباره تلاش می‌شود.`;
@@ -2855,6 +2866,7 @@ function renderLessonLibrary() {
     empty.className = 'overview-empty';
     empty.textContent = 'هنوز نکته‌ای به کتابخانه اضافه نکرده‌ای.';
     lessonLibraryList.appendChild(empty);
+    renderLessonReviews();
     return;
   }
   lessonLibrary
@@ -2875,8 +2887,59 @@ function renderLessonLibrary() {
         badge.textContent = tag;
         tags.appendChild(badge);
       });
+      const review = lessonReviews.find((item) => String(item.lessonId) === String(lesson.id));
+      if (review) {
+        const reviewMeta = document.createElement('p');
+        reviewMeta.className = 'lesson-review-meta';
+        const assessedCount = Math.max(0, Number(review.assessedCount) || 0);
+        const adherence = assessedCount
+          ? `رعایت ${Number(review.followedCount) || 0} از ${assessedCount} (${Math.round((Number(review.followedCount) || 0) * 100 / assessedCount)}٪)`
+          : 'هنوز شواهد کافی برای امتیاز رعایت ثبت نشده';
+        const nextReview = review.completed
+          ? 'مرورهای زمان‌بندی‌شده کامل شد'
+          : review.nextReviewAt
+            ? `مرور بعدی: ${new Date(review.nextReviewAt).toLocaleDateString('fa-IR')}`
+            : 'مرور بعدی تعیین نشده';
+        reviewMeta.textContent = `${adherence} · ${Number(review.violationCount) || 0} نقض · ${nextReview}`;
+        row.appendChild(reviewMeta);
+        const linkedTrades = Array.isArray(review.linkedTrades) ? review.linkedTrades.slice(-3).reverse() : [];
+        if (linkedTrades.length) {
+          const tradeLinks = document.createElement('div');
+          tradeLinks.className = 'lesson-trade-links';
+          for (const link of linkedTrades) {
+            const linkedTrade = document.createElement('p');
+            const date = String(link.tradeDate || '').slice(0, 10);
+            const tradeStatus = link.status === 'followed'
+              ? 'رعایت‌شده'
+              : link.status === 'not_followed' ? 'نقض‌شده' : 'نامشخص';
+            const tradeName = String(link.token || 'معامله');
+            linkedTrade.textContent = `${date} · ${tradeName} · ${tradeStatus}${link.evidence ? ` · ${String(link.evidence).slice(0, 180)}` : ''}`;
+            tradeLinks.appendChild(linkedTrade);
+          }
+          row.appendChild(tradeLinks);
+        }
+      }
       const actions = document.createElement('div');
       actions.className = 'lesson-library-item-actions';
+      const clarify = document.createElement('button');
+      clarify.type = 'button';
+      clarify.textContent = 'شفاف‌سازی با استاد';
+      clarify.addEventListener('click', async () => {
+        if (masterChatSend.disabled) return;
+        clarify.disabled = true;
+        try {
+          await createCoachConversation('شفاف‌سازی یک نکته', {
+            preserveDraft: true,
+            lessonImprovementId: lesson.id,
+          });
+          masterChatInput.value = 'این نکته برایم مبهم یا کلی است. کمکم کن با زبان خودم آن را به یک قانون روشن و قابل‌آزمایش تبدیل کنم؛ اگر برای دقیق‌شدنش اطلاعاتی لازم داری، اول از من بپرس.';
+          masterChatForm.requestSubmit();
+        } catch (error) {
+          lessonLibraryStatus.textContent = error.message || 'شروع شفاف‌سازی نکته ناموفق بود.';
+        } finally {
+          clarify.disabled = false;
+        }
+      });
       const edit = document.createElement('button');
       edit.type = 'button';
       edit.textContent = 'ویرایش';
@@ -2899,10 +2962,49 @@ function renderLessonLibrary() {
           lessonLibraryStatus.textContent = 'نکته حذف شد؛ در حال همگام‌سازی با ابر...';
         }
       });
-      actions.append(edit, remove);
+      actions.append(clarify, edit, remove);
       row.append(title, text, tags, actions);
       lessonLibraryList.appendChild(row);
     });
+  renderLessonReviews();
+}
+
+function renderLessonReviews() {
+  if (!lessonReviewList || !lessonReviewStartButton || !lessonReviewStatus) return;
+  lessonReviewList.replaceChildren();
+  const lessonsById = new Map(lessonLibrary.map((lesson) => [String(lesson.id), lesson]));
+  const now = Date.now();
+  const dueReviews = lessonReviews
+    .filter((review) => !review.completed && Date.parse(review.nextReviewAt || '') <= now
+      && lessonsById.has(String(review.lessonId)))
+    .sort((left, right) => Date.parse(left.nextReviewAt) - Date.parse(right.nextReviewAt));
+  const frequentViolations = lessonReviews
+    .filter((review) => Number(review.violationCount) > 0 && lessonsById.has(String(review.lessonId)))
+    .sort((left, right) => Number(right.violationCount) - Number(left.violationCount))
+    .slice(0, 5);
+  lessonReviewStartButton.disabled = dueReviews.length === 0;
+  lessonReviewStartButton.textContent = dueReviews.length
+    ? `شروع مرور (${dueReviews.length})`
+    : 'هنوز نکته‌ای موعد مرورش نرسیده';
+  lessonReviewStatus.textContent = dueReviews.length
+    ? `${dueReviews.length} نکته برای مرور موعد دارد.`
+    : 'مرورهای بعدی با فاصله‌های ۱، ۳، ۷، ۲۱ و ۶۰ روز پس از پاسخ ثبت می‌شوند.';
+  if (frequentViolations.length) {
+    const heading = document.createElement('strong');
+    heading.textContent = 'نکته‌هایی که بیشتر نقض شده‌اند';
+    lessonReviewList.appendChild(heading);
+    for (const review of frequentViolations) {
+      const lesson = lessonsById.get(String(review.lessonId));
+      const item = document.createElement('p');
+      const assessedCount = Math.max(0, Number(review.assessedCount) || 0);
+      const followedCount = Math.max(0, Number(review.followedCount) || 0);
+      const adherence = assessedCount
+        ? ` · رعایت ${followedCount} از ${assessedCount} (${Math.round(followedCount * 100 / assessedCount)}٪)`
+        : '';
+      item.textContent = `${lesson.book}: ${Number(review.violationCount)} بار نقض ثبت‌شده${adherence}${review.lastEvidence ? ` · شاهد آخر: ${String(review.lastEvidence).slice(0, 160)}` : ''}`;
+      lessonReviewList.appendChild(item);
+    }
+  }
 }
 
 function loadLessonLibrary() {
@@ -2922,8 +3024,40 @@ function loadLessonLibrary() {
     lessonLibrary = [];
     lessonLibraryStatus.textContent = 'خواندن کتابخانه ناموفق بود؛ داده‌های قدیمی تغییر نکردند.';
   }
+  renderLessonReviews();
+}
+
+function loadLessonReviews() {
+  try {
+    const saved = JSON.parse(appStorage.getItem(LESSON_REVIEWS_STORAGE_KEY) || '[]');
+    if (!Array.isArray(saved) || saved.some((review) => !review || typeof review.id !== 'string'
+      || typeof review.lessonId !== 'string' || typeof review.nextIntervalIndex !== 'number'
+      || !Array.isArray(review.history))) {
+      throw new Error('ساختار مرور نکته‌ها معتبر نیست.');
+    }
+    lessonReviews = saved;
+    invalidCentralLocalStorage.delete('lesson_reviews');
+  } catch (error) {
+    lessonReviews = [];
+    invalidCentralLocalStorage.add('lesson_reviews');
+    lessonReviewStatus.textContent = 'خواندن مرورهای قبلی ناموفق بود؛ داده‌های موجود دست‌نخورده باقی ماندند.';
+  }
   renderLessonLibrary();
 }
+
+lessonReviewStartButton?.addEventListener('click', async () => {
+  if (lessonReviewStartButton.disabled || masterChatSend.disabled) return;
+  lessonReviewStartButton.disabled = true;
+  try {
+    await createCoachConversation('مرور نکته‌های موعدشده', { preserveDraft: true, lessonReview: true });
+    masterChatInput.value = 'استاد، مرور فاصله‌دار نکته‌هایی را که موعدشان رسیده شروع کن. فقط یک سؤال بازیابی بپرس و جوابم را با نکته و رفتار ثبت‌شده در ژورنال مقایسه کن.';
+    masterChatForm.requestSubmit();
+  } catch (error) {
+    lessonReviewStatus.textContent = error.message || 'شروع مرور نکته‌ها ناموفق بود.';
+  } finally {
+    renderLessonReviews();
+  }
+});
 
 lessonLibraryForm?.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -3206,6 +3340,10 @@ async function saveCoachConversation(conversation) {
       commitments: conversation.commitments || [],
       homework: conversation.homework || '',
       followUp: conversation.followUp || '',
+      dailyLesson: conversation.dailyLesson === true,
+      lessonReview: conversation.lessonReview === true,
+      lessonImprovementId: conversation.lessonImprovementId || '',
+      lessonImprovementTurns: Number(conversation.lessonImprovementTurns) || 0,
       preview: conversation.preview || '',
       messageCount: conversation.messageCount || 0,
       legacyMigrated: conversation.legacyMigrated === true,
@@ -3292,7 +3430,13 @@ async function openCoachConversation(conversationId, { preserveScroll = false } 
   if (!preserveScroll) masterChatLog.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-async function createCoachConversation(title = '', { preserveDraft = false } = {}) {
+async function createCoachConversation(title = '', {
+  preserveDraft = false,
+  dailyLesson = false,
+  lessonReview = false,
+  lessonImprovementId = '',
+  lessonImprovementTurns = 0,
+} = {}) {
   const selectionSequence = ++coachConversationSelectionSequence;
   coachConversationLoadSequence += 1;
   const id = newCoachId();
@@ -3302,6 +3446,10 @@ async function createCoachConversation(title = '', { preserveDraft = false } = {
     title: title || 'گفت‌وگوی جدید',
     style: 'supportive',
     status: 'active',
+    dailyLesson,
+    lessonReview,
+    lessonImprovementId,
+    lessonImprovementTurns,
     messageCount: 0,
     preview: '',
     createdAt: new Date().toISOString(),
@@ -3320,6 +3468,7 @@ async function createCoachConversation(title = '', { preserveDraft = false } = {
   conversationSearchMatches = {};
   renderMasterChatTranscript();
   masterChatStatus.textContent = '';
+  setJournalView('coach');
   showCoachChatThread();
   return saved;
 }
@@ -3934,6 +4083,17 @@ async function handleFreeMasterChat(event) {
     if (payload.automaticUpdateFailed && activeConversation?.conversationId === conversationId) {
       masterChatStatus.textContent = 'پاسخ ذخیره شد، اما حافظه یا تمرین پذیرفته‌شده خودکار به‌روزرسانی نشد.';
     }
+    if ((payload.dailyLessonComplete || payload.lessonReviewComplete)
+      && activeConversation?.conversationId === conversationId) {
+      try {
+        await syncCentralRecords();
+      } catch (error) {
+        masterChatStatus.textContent = `پاسخ استاد ذخیره شد، اما همگام‌سازی امتیاز نکته ناموفق بود: ${error.message}`;
+      }
+    }
+    if (payload.lessonImprovementComplete && activeConversation?.conversationId === conversationId) {
+      masterChatStatus.textContent = 'پیشنهاد آماده شد؛ متن نکتهٔ اصلی در کتابخانه تغییر نکرده است.';
+    }
   } catch (error) {
     typingIndicator?.remove();
     if ((!conversationId || activeConversation?.conversationId === conversationId)
@@ -3956,6 +4116,21 @@ async function handleFreeMasterChat(event) {
 
 masterChatForm?.addEventListener('submit', (event) => {
   handleFreeMasterChat(event);
+});
+
+document.getElementById('coachDailyLessonStart')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (masterChatSend.disabled) return;
+  button.disabled = true;
+  try {
+    await createCoachConversation('درس امروز', { preserveDraft: true, dailyLesson: true });
+    masterChatInput.value = 'استاد، درس امروز را از معامله‌های ثبت‌شدهٔ امروز و نکته‌های مرتبط کتابخانه شروع کن. یک سؤال بپرس و منتظر پاسخ من بمان.';
+    masterChatForm.requestSubmit();
+  } catch (error) {
+    masterChatStatus.textContent = error.message || 'شروع درس امروز ناموفق بود.';
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.getElementById('openAfterLossRoom')?.addEventListener('click', () => {
@@ -4072,6 +4247,7 @@ async function hydrateApp() {
   loadTradingProfile();
   loadPersonalRules();
   loadLessonLibrary();
+  loadLessonReviews();
   const pendingLocalTrades = readLocalTrades();
   if (!state.remoteEnabled) {
     tradeBaselineReady = true;

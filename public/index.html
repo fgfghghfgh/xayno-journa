@@ -396,9 +396,18 @@
       .lesson-library-item { padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(3,8,12,.28); }
       .lesson-library-item strong { color: var(--text); font-size: 12px; }
       .lesson-library-item p { margin: 7px 0; color: var(--text-muted); font-size: 12px; line-height: 1.9; white-space: pre-wrap; }
+      .lesson-library-item .lesson-review-meta { color: var(--text-dim); font-size: 10px; }
+      .lesson-trade-links { display: grid; gap: 4px; margin: 8px 0; padding: 8px 10px; border-right: 2px solid rgba(0,212,245,.35); border-radius: 6px; background: rgba(0,212,245,.035); }
+      .lesson-trade-links p { margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.8; }
       .lesson-library-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
       .lesson-library-tag { padding: 3px 8px; border: 1px solid rgba(0,212,245,.18); border-radius: 999px; background: rgba(0,212,245,.06); color: var(--cyan); font-size: 10px; }
       .lesson-library-item-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+      .lesson-review-panel { display: grid; gap: 7px; margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.08); }
+      .lesson-review-panel h3 { margin: 0; font-size: 13px; }
+      .lesson-review-panel button { justify-self: start; min-height: 36px; border: 1px solid rgba(0,212,245,.22); border-radius: 9px; background: rgba(0,212,245,.07); color: var(--cyan); padding: 0 12px; font: inherit; font-weight: 750; cursor: pointer; }
+      .lesson-review-panel button:disabled { opacity: .55; cursor: not-allowed; }
+      .lesson-review-list { display: grid; gap: 5px; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+      .lesson-review-list p { margin: 0; }
       .monthly-comparison-controls { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
       .monthly-comparison-controls label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
       .monthly-comparison-controls input { min-height: 38px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 9px; color-scheme: dark; }
@@ -1530,6 +1539,7 @@
                 <h1>سلام، از کجا شروع کنیم؟</h1>
                 <p>دربارهٔ تصمیم‌ها، احساسات یا الگوهای تریدت حرف بزن. من همدل می‌مانم، اما اگر لازم باشد صریح و بی‌تعارف می‌گویم.</p>
                 <div class="coach-prompt-suggestions">
+                  <button id="coachDailyLessonStart" type="button">درس امروز از روی ژورنالم</button>
                   <button type="button" data-coach-prompt="می‌خواهم الان یک جلسهٔ آموزشی جدی و شخصی داشته باشیم. از یک موضوع مهم در ژورنال یا قول قبلی‌ام شروع کن، سؤال‌های پیگیرانه بپرس و در پایان نکته و تمرین مشخص بده.">شروع جلسهٔ آموزشی</button>
                   <button type="button" data-coach-prompt="کمکم کن آخرین معامله‌ام را از نظر تصمیم‌گیری مرور کنم.">مرور یک معامله</button>
                   <button type="button" data-coach-prompt="چطور جلوی تصمیم عجولانه و FOMO را بگیرم؟">کنترل تصمیم عجولانه</button>
@@ -1688,6 +1698,12 @@
               </form>
               <p id="lessonLibraryStatus" class="lesson-library-status" role="status" aria-live="polite"></p>
               <div id="lessonLibraryList" class="lesson-library-list"></div>
+              <section class="lesson-review-panel" aria-label="مرور فاصله‌دار نکته‌ها">
+                <h3>مرور و رعایت نکته‌ها</h3>
+                <p id="lessonReviewStatus" class="lesson-library-status" role="status" aria-live="polite"></p>
+                <button id="lessonReviewStart" type="button" disabled>هنوز نکته‌ای موعد مرورش نرسیده</button>
+                <div id="lessonReviewList" class="lesson-review-list"></div>
+              </section>
             </article>
             <article class="master-card coach-quick-card">
               <h2>اتاق بعد از ضرر</h2>
