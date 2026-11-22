@@ -345,6 +345,23 @@
       .trading-profile-category ul { margin: 0; padding-right: 20px; color: var(--text-muted); font-size: 12px; line-height: 2; }
       .trading-profile-category p { color: var(--text-dim); }
       .trading-profile-category textarea { width: 100%; min-height: 86px; resize: vertical; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(0,0,0,.2); color: var(--text); padding: 9px; font: inherit; line-height: 1.8; }
+      .personal-rules-card { grid-column: 1 / -1; }
+      .personal-rules-actions { margin-top: 12px; }
+      .personal-rules-actions button, .personal-rule-item button { min-height: 36px; border: 1px solid rgba(0,245,160,.2); border-radius: 9px; background: rgba(0,245,160,.08); color: var(--green); padding: 0 12px; font-weight: 750; cursor: pointer; }
+      .personal-rules-actions button:disabled { opacity: .55; cursor: wait; }
+      .personal-rules-status { color: var(--text-dim); font-size: 11px; line-height: 1.8; }
+      .personal-rules-list, .personal-rules-suggestions { display: grid; gap: 8px; margin-top: 10px; }
+      .personal-rule-item { padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(3,8,12,.28); }
+      .personal-rule-item strong { display: block; color: var(--text); font-size: 12px; line-height: 1.8; }
+      .personal-rule-item p { margin-top: 5px; font-size: 11px; }
+      .personal-rule-item.suggestion { border-color: rgba(255,187,77,.18); }
+      .pretrade-warning { margin-top: 10px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; color: var(--text-dim); font-size: 11px; line-height: 1.8; }
+      .pretrade-warning.found { border-color: rgba(255,187,77,.35); background: rgba(255,187,77,.07); color: #ffe0aa; }
+      .pretrade-warning ul { margin: 6px 0; padding-right: 20px; }
+      .pretrade-rule-checks { display: grid; gap: 8px; margin-top: 10px; padding: 10px; border: 1px solid rgba(0,245,160,.14); border-radius: 9px; }
+      .pretrade-rule-checks > strong { color: var(--text-muted); font-size: 11px; }
+      .pretrade-rule-check { display: grid; gap: 5px; color: var(--text-dim); font-size: 11px; }
+      .pretrade-rule-check select { min-height: 38px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 9px; }
       .checkin-card { grid-column: 1 / -1; }
       .checkin-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
       .checkin-form label { display: grid; gap: 7px; color: var(--text-muted); font-size: 12px; }
@@ -1126,6 +1143,17 @@
               <p id="tradingProfileStatus" class="trading-profile-status" role="status" aria-live="polite">نقشه فقط روی همین مرورگر ذخیره می‌شود؛ با فضای ابری همگام نیست.</p>
               <div id="tradingProfileResult" class="trading-profile-result" aria-live="polite"></div>
             </article>
+            <article class="master-card personal-rules-card">
+              <h2>قوانین شخصی من</h2>
+              <p>استاد فقط از اشتباه‌های تکرارشده در ضررهای ثبت‌شده قانون پیشنهاد می‌کند. قانون تا وقتی خودت تأییدش نکنی فعال نیست و فقط روی همین دستگاه ذخیره می‌شود.</p>
+              <div class="personal-rules-actions">
+                <button id="personalRulesSuggestBtn" type="button">پیشنهاد قانون از اشتباه‌های تکراری</button>
+              </div>
+              <p id="personalRulesStatus" class="personal-rules-status" role="status" aria-live="polite">قانون پیشنهادی بدون شاهد ثبت‌شده ساخته نمی‌شود.</p>
+              <div id="personalRulesSuggestions" class="personal-rules-suggestions" aria-live="polite"></div>
+              <h3>قوانین تأییدشده</h3>
+              <div id="personalRulesList" class="personal-rules-list"></div>
+            </article>
             <article class="master-card coach-session-card">
               <h2>جلسه با استاد</h2>
               <p>جلسه را با مرور سؤال‌های مشخص شروع کن؛ در پایان، خلاصه و تمرین ذخیره می‌شوند تا جلسهٔ بعد پیگیری شوند.</p>
@@ -1372,7 +1400,15 @@
                 <label for="preTradeSimilar">۳) شبیه کدام معاملهٔ قبلی توست؟
                   <textarea id="preTradeSimilar" placeholder="نمونهٔ مشابه یا «مطمئن نیستم»"></textarea>
                 </label>
+                <label for="preTradeSetup">۴) ستاپ یا نوع ورود چیست؟
+                  <textarea id="preTradeSetup" placeholder="ستاپت را بنویس؛ اگر مطمئن نیستی، بنویس نمی‌دانم"></textarea>
+                </label>
+                <label for="preTradeEmotion">۵) الان حالت ذهنی‌ات چیست؟
+                  <textarea id="preTradeEmotion" placeholder="مثلاً آرام، عجول، ترسیده یا FOMO"></textarea>
+                </label>
               </div>
+              <div id="preTradeWarnings" class="pretrade-warning neutral" role="status" aria-live="polite">ستاپ و حالت ذهنی را وارد کن تا با ضررهای ثبت‌شده مقایسه شوند.</div>
+              <div id="preTradeRuleChecks" class="pretrade-rule-checks" hidden></div>
               <div id="preTradeStatus" class="pretrade-status" role="status" aria-live="polite"></div>
               <div id="preTradeResult" class="coach-quick-result" aria-live="polite" hidden></div>
               <div class="pretrade-actions">
@@ -1387,6 +1423,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
-    <script src="/app.js?v=20261122-step8"></script>
+    <script src="/app.js?v=20261122-step9"></script>
   </body>
 </html>

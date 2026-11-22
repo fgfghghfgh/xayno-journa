@@ -420,7 +420,7 @@ app.post('/api/coach/quick-review', requireJournalAccess, async (req, res) => {
     return res.status(400).json({ message: 'نوع مرور مربی معتبر نیست.' });
   }
   const answerFields = kind === 'pre-entry'
-    ? ['why', 'stopLoss', 'similar']
+    ? ['why', 'stopLoss', 'similar', 'setup', 'emotion']
     : ['whatHappened', 'feeling', 'nextStep'];
   const safeAnswers = Object.fromEntries(answerFields.map((field) => [field, String(answers[field] || '').trim().slice(0, 2000)]));
   if (answerFields.some((field) => !safeAnswers[field])) {
@@ -457,7 +457,7 @@ app.post('/api/coach/quick-review', requireJournalAccess, async (req, res) => {
     'از دادهٔ موجود فراتر نرو. اگر معاملهٔ مرتبطی نیست صریح بگو نمونهٔ مشابهی در داده پیدا نشد؛ کمتر از ۳۰ معامله یعنی داده هنوز کمه و آمار قطعی نیست.',
     'اگر نشانهٔ ناامیدی، فشار شدید، ترید قمارگونه یا خطر معیشت دیدی، مهربانانه پیشنهاد صحبت با متخصص انسانی بده.',
     kind === 'pre-entry'
-      ? 'برای مکث ۲۰ ثانیه‌ای پیش از ورود، پاسخ دلیل ورود، حد ضرر و شباهت به معاملهٔ قبلی را با چند الگوی ثبت‌شده مقایسه کن. یک تناقض احتمالی و یک سؤال بررسی پیشنهاد بده؛ به‌جای کاربر تصمیم نگیر.'
+      ? 'برای مکث ۲۰ ثانیه‌ای پیش از ورود، دلیل ورود، حد ضرر، معاملهٔ مشابه، ستاپ و حالت ذهنی را با ضررهای ثبت‌شده مقایسه کن. اگر شاهد مشخصی هست یک هشدار مشروط و نام معامله/نمونه را بگو؛ اگر نیست صریح بگو نمونهٔ مشابهی پیدا نشد. یک سؤال بررسی پیشنهاد بده؛ به‌جای کاربر تصمیم نگیر.'
       : 'برای اتاق بعد از ضرر، اول احساس را معتبر بدان و بدون سرزنش فقط یک مشاهده از ژورنال بگو؛ سپس یک تمرین کوتاه برای مکث و سه سؤال مشخص برای قبل از هر تصمیم بعدی بده. معاملهٔ بعدی را توصیه نکن.',
   ].join(' ');
 
@@ -483,6 +483,97 @@ app.post('/api/coach/quick-review', requireJournalAccess, async (req, res) => {
   } catch (error) {
     console.error('Coach quick review failed:', error.message);
     return res.status(503).json({ message: 'پاسخ مربی در دسترس نیست یا زمان پاسخ تمام شد.' });
+  }
+});
+
+app.post('/api/coach/rules/suggest', requireJournalAccess, async (_req, res) => {
+  if (!AI_CHAT_API_KEY) return res.status(503).json({ message: 'برای پیشنهاد قانون، اتصال هوش مصنوعی چت را در تنظیمات سرور فعال کن.' });
+
+  const trades = readTrades();
+  const losses = trades
+    .filter((trade) => trade.status === 'closed' && tradePnl(trade) < 0)
+    .sort((left, right) => String(right.closedAt || right.openedAt || right.journalDate || right.createdAt || '')
+      .localeCompare(String(left.closedAt || left.openedAt || left.journalDate || left.createdAt || '')))
+    .slice(0, 100)
+    .map((trade) => ({
+      id: String(trade.id || '').slice(0, 80),
+      token: String(trade.token || '').slice(0, 100),
+      date: String(trade.closedAt || trade.openedAt || trade.journalDate || trade.createdAt || '').slice(0, 40),
+      setup: String(trade.setup || '').slice(0, 200),
+      emotion: String(trade.emotion || '').slice(0, 400),
+      mistakes: String(trade.mistakes || '').slice(0, 700),
+      lesson: String(trade.lesson || '').slice(0, 700),
+      entryReason: String(trade.entryReason || '').slice(0, 500),
+      riskLevel: String(trade.riskLevel || '').slice(0, 40),
+    }));
+  const repeatedPatterns = new Map();
+  for (const trade of losses) {
+    for (const field of ['mistakes', 'lesson']) {
+      const value = trade[field].toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+      if (value.length < 3) continue;
+      const key = `${field}:${value}`;
+      const group = repeatedPatterns.get(key) || { field, value: trade[field], tradeIds: [] };
+      group.tradeIds.push(trade.id);
+      repeatedPatterns.set(key, group);
+    }
+  }
+  const repeatPatterns = [...repeatedPatterns.values()].filter((group) => group.tradeIds.length >= 2);
+  const repeatedTradeIds = new Set(repeatPatterns.flatMap((group) => group.tradeIds));
+  const repeatableLosses = losses.filter((trade) => repeatedTradeIds.has(trade.id));
+  if (!repeatPatterns.length) {
+    return res.json({
+      suggestions: [],
+      lossCount: losses.length,
+      notice: 'در ضررهای ثبت‌شده، اشتباه یا درس تکراریِ یکسان پیدا نشد؛ برای پیشنهاد قانون شخصی دادهٔ کافی نیست.',
+    });
+  }
+
+  try {
+    const result = await requestCoachJson([
+      {
+        role: 'system',
+        content: [
+          'تو مربی خودآگاهی ترید هستی و فقط بر پایهٔ دادهٔ داده‌شده قانون‌های پیشنهادی برای جلوگیری از اشتباه تکراری می‌سازی.',
+          'قانون فقط وقتی پیشنهاد شود که یک اشتباه یا درس یکسان در دست‌کم دو ضرر در repeatPatterns آمده باشد؛ شاهد، قانون یا شناسه نساز.',
+          'evidenceIds هر پیشنهاد باید دقیقاً از یک گروه تکراری واحد در repeatPatterns باشد و همهٔ شناسه‌های همان گروه را ذکر کند.',
+          'هر قانون باید کوتاه، قابل‌اجرا و قابل‌سنجش باشد؛ مثلاً شرط مکث بعد از تعداد مشخص ضرر فقط وقتی این تعداد در داده شاهد دارد.',
+          'قانون‌ها صرفاً پیشنهادند؛ کاربر باید خودش تأییدشان کند. توصیهٔ ورود و خروج، اندازهٔ پوزیشن یا تصمیم مالی نده.',
+          'اگر کمتر از ۳۰ معاملهٔ کل وجود دارد، ادعای آماری قطعی نکن و محدودیت داده را در notice بگو.',
+          'فقط JSON معتبر با notice رشته و suggestions آرایهٔ حداکثر ۵ عضوی برگردان؛ هر عضو دقیقاً rule رشته، reason رشته و evidenceIds آرایهٔ شناسه‌های ترید داشته باشد. هر قانون و دلیل حداکثر 500 نویسه باشد.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          totalTradeCount: trades.length,
+          lossCount: losses.length,
+          losses: repeatableLosses,
+          repeatPatterns,
+        }).slice(0, 60_000),
+      },
+    ]);
+    const validEvidenceGroups = new Set(repeatPatterns.map((group) => [...group.tradeIds].sort().join('|')));
+    if (typeof result.notice !== 'string' || !Array.isArray(result.suggestions) || result.suggestions.length > 5
+      || result.suggestions.some((suggestion) => !suggestion || typeof suggestion.rule !== 'string' || !suggestion.rule.trim() || suggestion.rule.length > 500
+        || typeof suggestion.reason !== 'string' || !suggestion.reason.trim() || suggestion.reason.length > 500
+        || !Array.isArray(suggestion.evidenceIds) || !suggestion.evidenceIds.length
+        || !validEvidenceGroups.has([...new Set(suggestion.evidenceIds)].sort().join('|')))) {
+      return res.status(502).json({ message: 'پیشنهاد قانون با قالب معتبر یا شاهد مشخص برنگشت؛ دوباره تلاش کن.' });
+    }
+    return res.json({
+      suggestions: result.suggestions.map((suggestion) => ({
+        rule: suggestion.rule.trim(),
+        reason: suggestion.reason.trim(),
+        evidenceIds: [...new Set(suggestion.evidenceIds)],
+      })),
+      lossCount: losses.length,
+      notice: trades.length < 30
+        ? 'داده هنوز کمه؛ این قانون‌ها فقط پیشنهادهای اولیه بر اساس ضررهای ثبت‌شده‌اند، نه نتیجهٔ آماری.'
+        : result.notice.slice(0, 1000),
+    });
+  } catch (error) {
+    console.error('Personal rule suggestion failed:', error.message);
+    return res.status(502).json({ message: 'ساخت پیشنهاد قانون ناموفق بود؛ تنظیمات API چت را بررسی کن.' });
   }
 });
 
@@ -1191,7 +1282,8 @@ app.post('/api/trades', async (req, res) => {
   const payload = req.body || {};
   const trades = readTrades();
   const requestedId = String(payload.id || '');
-  const isNewJournal = !requestedId || !trades.some((item) => item.id === requestedId);
+  const existingTrade = trades.find((item) => item.id === requestedId);
+  const isNewJournal = !requestedId || !existingTrade;
   const trade = {
     id: requestedId || `trade_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
     status: payload.status || 'closed',
@@ -1219,6 +1311,15 @@ app.post('/api/trades', async (req, res) => {
     lesson: payload.lesson || '',
     notes: payload.notes || '',
     images: Array.isArray(payload.images) ? payload.images : [],
+    personalRuleChecks: Array.isArray(payload.personalRuleChecks)
+      ? payload.personalRuleChecks.slice(0, 30).filter((check) => check && typeof check.ruleId === 'string'
+        && ['followed', 'not-followed', 'not-applicable'].includes(check.status))
+        .map((check) => ({
+          ruleId: check.ruleId.slice(0, 100),
+          rule: String(check.rule || '').slice(0, 500),
+          status: check.status,
+        }))
+      : (existingTrade?.personalRuleChecks || []),
     createdAt: payload.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

@@ -2,6 +2,7 @@ const STORAGE_KEY = 'xayno-local-journal';
 const CHECKIN_STORAGE_KEY = 'xayno-daily-checkins-v1';
 const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
 const TRADING_PROFILE_STORAGE_KEY = 'xayno-trading-profile-v1';
+const PERSONAL_RULES_STORAGE_KEY = 'xayno-personal-trading-rules-v1';
 const TRADING_PROFILE_CATEGORIES = [
   ['triggers', 'محرک‌های احساسی'],
   ['moneyBeliefs', 'باورهای احتمالی دربارهٔ پول'],
@@ -65,10 +66,17 @@ const tradingProfileSaveButton = document.getElementById('tradingProfileSaveBtn'
 const tradingProfileDeleteButton = document.getElementById('tradingProfileDeleteBtn');
 const tradingProfileStatus = document.getElementById('tradingProfileStatus');
 const tradingProfileResult = document.getElementById('tradingProfileResult');
+const personalRulesButton = document.getElementById('personalRulesSuggestBtn');
+const personalRulesStatus = document.getElementById('personalRulesStatus');
+const personalRulesSuggestions = document.getElementById('personalRulesSuggestions');
+const personalRulesList = document.getElementById('personalRulesList');
 const preTradeCheck = document.getElementById('preTradeCheck');
 const preTradeWhy = document.getElementById('preTradeWhy');
 const preTradeStop = document.getElementById('preTradeStop');
 const preTradeSimilar = document.getElementById('preTradeSimilar');
+const preTradeSetup = document.getElementById('preTradeSetup');
+const preTradeEmotion = document.getElementById('preTradeEmotion');
+const preTradeRuleChecksElement = document.getElementById('preTradeRuleChecks');
 const preTradeStatus = document.getElementById('preTradeStatus');
 const preTradeResult = document.getElementById('preTradeResult');
 let preTradeReviewComplete = false;
@@ -93,6 +101,9 @@ let coachSessionBusy = false;
 let tradingProfile = null;
 let tradingProfileEditing = false;
 let tradingProfileBusy = false;
+let personalRuleSuggestions = [];
+let personalRulesBusy = false;
+let personalRules = [];
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
 let journalChartOverlayState = new Map();
@@ -1420,6 +1431,7 @@ function renderSelectedDay() {
         ${trade.emotion ? `<div class="trade-meta">حالت ذهنی: ${escapeHtml(trade.emotion)}</div>` : ''}
         ${trade.mistakes ? `<div class="trade-meta">اشتباه‌ها: ${escapeHtml(trade.mistakes)}</div>` : ''}
         ${trade.lesson ? `<div class="trade-meta">درس: ${escapeHtml(trade.lesson)}</div>` : ''}
+        ${Array.isArray(trade.personalRuleChecks) && trade.personalRuleChecks.length ? `<div class="trade-meta">ثبت پیش از ورود: ${trade.personalRuleChecks.map((check) => `${escapeHtml(check.rule)} — ${check.status === 'followed' ? 'قصد رعایت دارم' : check.status === 'not-followed' ? 'قصد رعایت ندارم' : 'نامربوط'}`).join(' · ')}</div>` : ''}
         ${trade.notes ? `<div class="trade-meta">${escapeHtml(trade.notes)}</div>` : ''}
         ${Array.isArray(trade.images) && trade.images.length ? `<div class="image-previews">${trade.images.map((image, index) => { const source = safeImageSource(image); return source ? `<img src="${escapeHtml(source)}" alt="تصویر معامله ${index + 1}" loading="lazy">` : ''; }).join('')}</div>` : ''}
         <div class="trade-actions">
@@ -1583,6 +1595,86 @@ function getFormValues() {
   };
 }
 
+function normalizeJournalText(value) {
+  return String(value || '').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function journalTextSimilarity(left, right) {
+  const first = normalizeJournalText(left);
+  const second = normalizeJournalText(right);
+  if (!first || !second) return false;
+  if (first === second) return true;
+  const firstWords = new Set(first.split(/\s+/).filter((word) => word.length >= 3));
+  const secondWords = new Set(second.split(/\s+/).filter((word) => word.length >= 3));
+  if (!firstWords.size || !secondWords.size) return false;
+  const shared = [...firstWords].filter((word) => secondWords.has(word)).length;
+  return shared >= 2 && shared / new Set([...firstWords, ...secondWords]).size >= 0.5;
+}
+
+function findSimilarLosses(setup, emotion) {
+  return state.trades.filter((trade) => trade.status === 'closed' && tradePnl(trade) < 0)
+    .map((trade) => {
+      const matches = [];
+      if (journalTextSimilarity(setup, trade.setup)) matches.push('ستاپ');
+      if (journalTextSimilarity(emotion, trade.emotion)) matches.push('حالت ذهنی');
+      return { trade, matches };
+    })
+    .filter((item) => item.matches.length)
+    .slice(0, 5);
+}
+
+function renderPreTradeWarnings() {
+  const container = document.getElementById('preTradeWarnings');
+  if (!container) return;
+  container.replaceChildren();
+  const matches = findSimilarLosses(preTradeSetup.value, preTradeEmotion.value);
+  if (!matches.length) {
+    container.textContent = preTradeSetup.value.trim() || preTradeEmotion.value.trim()
+      ? 'در ضررهای ثبت‌شده، شباهت روشن در ستاپ یا حالت ذهنی پیدا نشد؛ این تضمینِ نبودن شباهت نیست.'
+      : 'ستاپ و حالت ذهنی را وارد کن تا با ضررهای ثبت‌شده مقایسه شوند.';
+    container.className = 'pretrade-warning neutral';
+    return;
+  }
+  container.className = 'pretrade-warning found';
+  const title = document.createElement('strong');
+  title.textContent = 'هشدار: این مورد به ضررهای قبلی شباهت دارد';
+  container.appendChild(title);
+  const list = document.createElement('ul');
+  for (const { trade, matches: fields } of matches) {
+    const item = document.createElement('li');
+    const date = trade.closedAt || trade.openedAt || trade.journalDate || 'تاریخ ثبت نشده';
+    item.textContent = `${trade.token || 'معاملهٔ بدون نام'} · ${date} · شباهت در ${fields.join(' و ')}${trade.mistakes ? ` · اشتباه ثبت‌شده: ${trade.mistakes}` : ''}${trade.lesson ? ` · درس: ${trade.lesson}` : ''}`;
+    list.appendChild(item);
+  }
+  container.appendChild(list);
+  const note = document.createElement('p');
+  note.textContent = 'این فقط یادآوری از ژورنال است؛ تصمیم نهایی با خودت است.';
+  container.appendChild(note);
+}
+
+function renderPreTradeRuleChecks() {
+  preTradeRuleChecksElement.replaceChildren();
+  if (!preTradeFromForm || !personalRules.length) {
+    preTradeRuleChecksElement.hidden = true;
+    return;
+  }
+  preTradeRuleChecksElement.hidden = false;
+  const heading = document.createElement('strong');
+  heading.textContent = 'قوانین تأییدشده‌ات را برای این معامله مرور کن:';
+  preTradeRuleChecksElement.appendChild(heading);
+  for (const rule of personalRules) {
+    const label = document.createElement('label');
+    label.className = 'pretrade-rule-check';
+    const text = document.createElement('span');
+    text.textContent = rule.rule;
+    const select = document.createElement('select');
+    select.dataset.ruleId = rule.id;
+    select.innerHTML = '<option value="">انتخاب کن</option><option value="followed">قصد دارم رعایت کنم</option><option value="not-followed">قصد ندارم رعایت کنم</option><option value="not-applicable">این قانون مربوط نیست</option>';
+    label.append(text, select);
+    preTradeRuleChecksElement.appendChild(label);
+  }
+}
+
 async function saveTrade(event) {
   event.preventDefault();
   const values = getFormValues();
@@ -1598,9 +1690,13 @@ async function saveTrade(event) {
     preTradeWhy.value = values.entryReason;
     preTradeStop.value = values.stopLoss;
     preTradeSimilar.value = '';
+    preTradeSetup.value = values.setup;
+    preTradeEmotion.value = values.emotion;
+    renderPreTradeRuleChecks();
     preTradeStatus.textContent = '۲۰ ثانیه مکث: دلیل ورود، حد ضرر و شباهت به معامله‌های قبلی را مرور کن.';
     preTradeResult.hidden = true;
     preTradeResult.textContent = '';
+    renderPreTradeWarnings();
     preTradeCheck.hidden = false;
     return;
   }
@@ -1609,6 +1705,13 @@ async function saveTrade(event) {
   const nextTrade = {
     id: values.id || `trade_${Date.now()}`,
     ...values,
+    personalRuleChecks: preTradeReviewComplete
+      ? [...preTradeRuleChecksElement.querySelectorAll('select')].map((select) => ({
+        ruleId: select.dataset.ruleId,
+        rule: personalRules.find((item) => item.id === select.dataset.ruleId)?.rule || '',
+        status: select.value,
+      }))
+      : (state.trades.find((trade) => trade.id === values.id)?.personalRuleChecks || []),
     createdAt: state.trades.find((trade) => trade.id === values.id)?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -1715,9 +1818,11 @@ async function reviewBeforeEntry() {
     why: preTradeWhy.value.trim(),
     stopLoss: preTradeStop.value.trim(),
     similar: preTradeSimilar.value.trim(),
+    setup: preTradeSetup.value.trim(),
+    emotion: preTradeEmotion.value.trim(),
   };
   if (Object.values(answers).some((answer) => !answer)) {
-    preTradeStatus.textContent = 'هر سه مورد را پاسخ بده؛ اگر چیزی را نمی‌دانی، صریح بنویس «نمی‌دانم».';
+    preTradeStatus.textContent = 'هر پنج مورد را پاسخ بده؛ اگر چیزی را نمی‌دانی، صریح بنویس «نمی‌دانم».';
     return;
   }
   preTradeReviewBusy = true;
@@ -1740,15 +1845,26 @@ async function reviewBeforeEntry() {
 function continueAfterPreTrade() {
   const answers = [preTradeWhy.value.trim(), preTradeStop.value.trim(), preTradeSimilar.value.trim()];
   if (answers.some((answer) => !answer)) {
-    preTradeStatus.textContent = 'قبل از ادامه، هر سه مورد را پاسخ بده؛ برای مورد نامشخص بنویس «نمی‌دانم».';
+    preTradeStatus.textContent = 'دلیل ورود، حد ضرر و معاملهٔ مشابه را پاسخ بده؛ اگر موردی نامشخص است بنویس «نمی‌دانم». ستاپ و حالت ذهنی را هم وارد کن.';
+    return;
+  }
+  if (!preTradeSetup.value.trim() || !preTradeEmotion.value.trim()) {
+    preTradeStatus.textContent = 'ستاپ و حالت ذهنی را هم بنویس؛ اگر مطمئن نیستی بنویس «نمی‌دانم».';
     return;
   }
   if (!preTradeFromForm) {
     preTradeCheck.hidden = true;
     return;
   }
+  const ruleSelects = [...preTradeRuleChecksElement.querySelectorAll('select')];
+  if (ruleSelects.some((select) => !select.value)) {
+    preTradeStatus.textContent = 'وضعیت هر قانون تأییدشده را مشخص کن: رعایت می‌کنی، این بار رعایت نمی‌کنی، یا مربوط نیست.';
+    return;
+  }
   document.getElementById('entryReason').value = answers[0];
   document.getElementById('stopLoss').value = answers[1];
+  document.getElementById('setup').value = preTradeSetup.value.trim();
+  document.getElementById('emotion').value = preTradeEmotion.value.trim();
   preTradeReviewComplete = true;
   preTradeCheck.hidden = true;
   tradeForm.requestSubmit();
@@ -2054,6 +2170,115 @@ tradingProfileDeleteButton?.addEventListener('click', () => {
     renderTradingProfile();
   } catch (error) {
     tradingProfileStatus.textContent = 'پاک‌کردن نقشه ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
+  }
+});
+
+function savePersonalRules(nextRules) {
+  try {
+    localStorage.setItem(PERSONAL_RULES_STORAGE_KEY, JSON.stringify(nextRules));
+    personalRules = nextRules;
+    renderPersonalRules();
+    return true;
+  } catch (error) {
+    personalRulesStatus.textContent = 'ذخیرهٔ قانون ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
+    return false;
+  }
+}
+
+function renderPersonalRules() {
+  personalRulesList.replaceChildren();
+  if (!personalRules.length) {
+    const empty = document.createElement('p');
+    empty.className = 'overview-empty';
+    empty.textContent = 'هنوز قانونی تأیید نکرده‌ای.';
+    personalRulesList.appendChild(empty);
+  }
+  for (const rule of personalRules) {
+    const row = document.createElement('article');
+    row.className = 'personal-rule-item';
+    const title = document.createElement('strong');
+    title.textContent = rule.rule;
+    const meta = document.createElement('p');
+    meta.textContent = `تأییدشدهٔ ${new Date(rule.approvedAt).toLocaleDateString('fa-IR')} · فقط روی این دستگاه`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'حذف قانون';
+    remove.addEventListener('click', () => {
+      if (savePersonalRules(personalRules.filter((item) => item.id !== rule.id))) {
+        personalRulesStatus.textContent = 'قانون از همین دستگاه حذف شد.';
+      }
+    });
+    row.append(title, meta, remove);
+    personalRulesList.appendChild(row);
+  }
+  personalRulesSuggestions.replaceChildren();
+  for (const suggestion of personalRuleSuggestions) {
+    const card = document.createElement('article');
+    card.className = 'personal-rule-item suggestion';
+    const title = document.createElement('strong');
+    title.textContent = suggestion.rule;
+    const reason = document.createElement('p');
+    reason.textContent = suggestion.reason;
+    const evidence = document.createElement('p');
+    evidence.textContent = `شاهد در ${suggestion.evidenceIds.length} ضرر ثبت‌شده`;
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.textContent = 'تأیید و افزودن قانون';
+    approve.addEventListener('click', () => {
+      const alreadyExists = personalRules.some((rule) => normalizeJournalText(rule.rule) === normalizeJournalText(suggestion.rule));
+      if (alreadyExists) {
+        personalRulesStatus.textContent = 'این قانون قبلاً ذخیره شده است.';
+        return;
+      }
+      const next = [...personalRules, {
+        id: `rule_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+        rule: suggestion.rule,
+        evidenceIds: suggestion.evidenceIds,
+        approvedAt: new Date().toISOString(),
+      }];
+      if (savePersonalRules(next)) {
+        personalRuleSuggestions = personalRuleSuggestions.filter((item) => item !== suggestion);
+        renderPersonalRules();
+        personalRulesStatus.textContent = 'قانون با تأیید تو روی همین مرورگر ذخیره شد.';
+      }
+    });
+    card.append(title, reason, evidence, approve);
+    personalRulesSuggestions.appendChild(card);
+  }
+}
+
+function loadPersonalRules() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PERSONAL_RULES_STORAGE_KEY) || '[]');
+    if (!Array.isArray(saved) || saved.some((rule) => !rule || typeof rule.id !== 'string' || typeof rule.rule !== 'string')) {
+      throw new Error('ساختار قوانین شخصی معتبر نیست.');
+    }
+    personalRules = saved;
+  } catch (error) {
+    personalRulesStatus.textContent = 'خواندن قوانین قبلی ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
+  }
+  renderPersonalRules();
+}
+
+personalRulesButton?.addEventListener('click', async () => {
+  if (personalRulesBusy) return;
+  personalRulesBusy = true;
+  personalRulesButton.disabled = true;
+  personalRulesButton.textContent = 'در حال بررسی ضررها...';
+  personalRulesStatus.textContent = 'فقط ضررهای ثبت‌شده با اشتباه یا درس بررسی می‌شوند؛ قانون بدون شاهد ساخته نمی‌شود.';
+  try {
+    const response = await apiFetch('/api/coach/rules/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'پیشنهاد قانون ناموفق بود.');
+    personalRuleSuggestions = payload.suggestions;
+    personalRulesStatus.textContent = `${payload.notice}${payload.lossCount ? ` · ${payload.lossCount} ضرر ثبت‌شده بررسی شد` : ''}`;
+    renderPersonalRules();
+  } catch (error) {
+    personalRulesStatus.textContent = error.message || 'پیشنهاد قانون ناموفق بود.';
+  } finally {
+    personalRulesBusy = false;
+    personalRulesButton.disabled = false;
+    personalRulesButton.textContent = 'پیشنهاد قانون از اشتباه‌های تکراری';
   }
 });
 
@@ -2396,11 +2621,17 @@ document.getElementById('openPreTradeRoom')?.addEventListener('click', () => {
   preTradeWhy.value = '';
   preTradeStop.value = '';
   preTradeSimilar.value = '';
+  preTradeSetup.value = '';
+  preTradeEmotion.value = '';
+  renderPreTradeRuleChecks();
   preTradeStatus.textContent = '۲۰ ثانیه مکث: دلیل ورود، حد ضرر و شباهت به معامله‌های قبلی را مرور کن.';
   preTradeResult.hidden = true;
   preTradeResult.textContent = '';
   preTradeCheck.hidden = false;
+  renderPreTradeWarnings();
 });
+preTradeSetup?.addEventListener('input', renderPreTradeWarnings);
+preTradeEmotion?.addEventListener('input', renderPreTradeWarnings);
 document.getElementById('sendAfterLossRoom')?.addEventListener('click', reviewAfterLoss);
 document.getElementById('runPreTradeReview')?.addEventListener('click', reviewBeforeEntry);
 document.getElementById('continueAfterPreTrade')?.addEventListener('click', continueAfterPreTrade);
@@ -2455,6 +2686,7 @@ async function hydrateApp() {
     checkinLocalNote.textContent = 'خواندن چک‌این‌های قبلی ناموفق بود؛ داده‌ها حذف نشده‌اند. فضای ذخیره‌سازی مرورگر را بررسی کن.';
   }
   loadTradingProfile();
+  loadPersonalRules();
   const pendingLocalTrades = readLocalTrades();
   const serverTrades = await fetchServerTrades();
   if (Array.isArray(serverTrades) && (serverTrades.length || state.remoteEnabled)) {
