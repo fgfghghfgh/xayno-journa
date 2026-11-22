@@ -355,6 +355,15 @@
       .personal-rule-item strong { display: block; color: var(--text); font-size: 12px; line-height: 1.8; }
       .personal-rule-item p { margin-top: 5px; font-size: 11px; }
       .personal-rule-item.suggestion { border-color: rgba(255,187,77,.18); }
+      .monthly-comparison-controls { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+      .monthly-comparison-controls label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
+      .monthly-comparison-controls input { min-height: 38px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 9px; color-scheme: dark; }
+      .monthly-comparison-note { margin: 10px 0; color: var(--text-dim); font-size: 10px; line-height: 1.8; }
+      .monthly-comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .monthly-comparison-period { min-width: 0; padding: 11px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: rgba(3,8,12,.24); }
+      .monthly-comparison-period h3 { margin: 0 0 8px; color: var(--text); font-size: 12px; }
+      .monthly-comparison-period p { margin: 5px 0; color: var(--text-muted); font-size: 10px; line-height: 1.8; overflow-wrap: anywhere; }
+      @media (max-width: 620px) { .monthly-comparison-grid { grid-template-columns: 1fr; } }
       .pretrade-warning { margin-top: 10px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; color: var(--text-dim); font-size: 11px; line-height: 1.8; }
       .pretrade-warning.found { border-color: rgba(255,187,77,.35); background: rgba(255,187,77,.07); color: #ffe0aa; }
       .pretrade-warning ul { margin: 6px 0; padding-right: 20px; }
@@ -419,6 +428,7 @@
       .master-message { max-width: 78%; margin: 8px 0; padding: 10px 12px; border-radius: 12px; line-height: 1.8; font-size: 12px; white-space: pre-wrap; }
       .master-message.user { margin-right: auto; background: rgba(0,212,245,.10); border: 1px solid rgba(0,212,245,.15); }
       .master-message.assistant { margin-left: auto; background: rgba(0,245,160,.09); border: 1px solid rgba(0,245,160,.14); }
+      .master-message.system { max-width: 100%; color: var(--text-dim); font-size: 10px; text-align: center; }
       .master-chat-form { display: flex; gap: 8px; }
       .master-chat-form textarea { flex: 1; min-height: 48px; resize: vertical; border: 1px solid rgba(255,255,255,.10); border-radius: 10px; background: rgba(255,255,255,.04); color: var(--text); padding: 10px 12px; }
       .master-chat-form button { border: 0; border-radius: 10px; background: var(--green); color: #06110d; padding: 0 18px; font-weight: 800; cursor: pointer; }
@@ -1131,6 +1141,17 @@
               </div>
               <div id="masterReportResult" class="master-report-result" aria-live="polite"></div>
             </article>
+            <article class="master-card monthly-comparison-card">
+              <h2>مقایسهٔ ماهانه</h2>
+              <p>ماه کامل قبلی به‌صورت پیش‌فرض انتخاب می‌شود؛ هر ماهی را خواستی می‌توانی با ماه قبلش مقایسه کنی. این آمار توصیفی است و علت سود یا ضرر را ثابت نمی‌کند.</p>
+              <div class="monthly-comparison-controls">
+                <label for="monthlyComparisonMonth">ماه مورد بررسی
+                  <input id="monthlyComparisonMonth" type="month">
+                </label>
+              </div>
+              <p id="monthlyComparisonNote" class="monthly-comparison-note" role="status" aria-live="polite"></p>
+              <div id="monthlyComparisonResult" class="monthly-comparison-grid" aria-live="polite"></div>
+            </article>
             <article class="master-card trading-profile-card">
               <h2>نقشهٔ شخصیت ترید من</h2>
               <p>استاد فقط فرضیه‌هایی را از نوشته‌های ژورنال و خلاصهٔ جلسه‌ها پیشنهاد می‌دهد. مثال‌ها باید از داده‌های خودت باشند؛ این نقشه تشخیص روان‌شناختی نیست و تا تأیید تو ذخیره نمی‌شود.</p>
@@ -1206,9 +1227,10 @@
             </article>
             <article class="master-card master-chat">
               <h2>چت با استاد</h2>
+              <p>سؤال آزاد بپرس و سؤال بعدی را به جواب قبلی وصل کن؛ استاد از معاملات ثبت‌شدهٔ ژورنال استفاده می‌کند. گفت‌وگو با بستن صفحه پاک می‌شود. عکس چارت در چت بررسی نمی‌شود و با کمتر از ۳۰ معامله نتیجهٔ آماری قطعی نمی‌دهد.</p>
               <div id="masterChatLog" class="master-chat-log" aria-live="polite"></div>
               <form id="masterChatForm" class="master-chat-form">
-                <textarea id="masterChatInput" placeholder="مثلاً: روی اشتباه‌های تکراری‌ام کمکم کن"></textarea>
+                <textarea id="masterChatInput" maxlength="3000" placeholder="مثلاً: چرا پنج معاملهٔ آخرم ضرر شد؟"></textarea>
                 <button id="masterChatSend" type="submit">ارسال</button>
               </form>
             </article>
@@ -1423,6 +1445,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
-    <script src="/app.js?v=20261122-step9"></script>
+    <script src="/app.js?v=20261122-step10"></script>
   </body>
 </html>

@@ -48,6 +48,9 @@ const masterChatSend = document.getElementById('masterChatSend');
 const masterReportButton = document.getElementById('masterReportBtn');
 const masterReportStatus = document.getElementById('masterReportStatus');
 const masterReportResult = document.getElementById('masterReportResult');
+const monthlyComparisonMonth = document.getElementById('monthlyComparisonMonth');
+const monthlyComparisonNote = document.getElementById('monthlyComparisonNote');
+const monthlyComparisonResult = document.getElementById('monthlyComparisonResult');
 const coachSessionStartButton = document.getElementById('coachSessionStart');
 const coachSessionStatus = document.getElementById('coachSessionStatus');
 const coachSessionTranscript = document.getElementById('coachSessionTranscript');
@@ -94,6 +97,7 @@ let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
 let pushToastTimer = null;
 let activeJournalView = 'journal';
+let masterChatHistory = [];
 let coachingSessions = [];
 let activeCoachingSession = null;
 let activeCoachingQuestion = 0;
@@ -1130,6 +1134,86 @@ function getProcessScore(trade) {
   };
 }
 
+function getPreviousMonthKey(monthKey) {
+  const [year, month] = String(monthKey).split('-').map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return '';
+  const previous = new Date(year, month - 2, 1);
+  return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function summarizeMonthTrades(trades) {
+  const closed = trades.filter((trade) => trade.status === 'closed');
+  const scored = closed.map(getProcessScore).filter((score) => score.complete);
+  const emotionSignals = [
+    { label: 'ترس', pattern: /ترس|ترسیدم|می‌ترسم|fear/i },
+    { label: 'طمع', pattern: /طمع|حریص|greed/i },
+    { label: 'فومو', pattern: /فومو|fomo|جا\s*ماندن|جاماندن/i },
+    { label: 'بی‌صبری', pattern: /بی‌صبری|بی صبری|عجله|شتاب‌زده|impatien/i },
+  ];
+  const emotions = emotionSignals.map(({ label, pattern }) => ({
+    label,
+    count: trades.filter((trade) => [trade.emotion, trade.mistakes, trade.notes, trade.entryReason, trade.exitReason, trade.lesson]
+      .some((value) => pattern.test(String(value || '')))).length,
+  })).filter((item) => item.count > 0).sort((left, right) => right.count - left.count);
+  const mistakeGroups = new Map();
+  for (const trade of trades) {
+    const mistake = String(trade.mistakes || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('fa-IR');
+    if (!mistake) continue;
+    const group = mistakeGroups.get(mistake) || { text: String(trade.mistakes).trim(), count: 0 };
+    group.count += 1;
+    mistakeGroups.set(mistake, group);
+  }
+  const repeatedMistakes = [...mistakeGroups.values()].filter((item) => item.count > 1)
+    .sort((left, right) => right.count - left.count).slice(0, 3);
+  const ruleChecks = trades.flatMap((trade) => Array.isArray(trade.personalRuleChecks) ? trade.personalRuleChecks : []);
+  const applicableRuleChecks = ruleChecks.filter((check) => check.status === 'followed' || check.status === 'not-followed');
+  const followedRuleChecks = applicableRuleChecks.filter((check) => check.status === 'followed').length;
+  return {
+    total: trades.length,
+    closed: closed.length,
+    pnl: closed.reduce((sum, trade) => sum + tradePnl(trade), 0),
+    processAverage: scored.length ? scored.reduce((sum, score) => sum + score.score, 0) / scored.length : null,
+    scoredCount: scored.length,
+    emotions,
+    repeatedMistakes,
+    ruleChecks,
+    followedRuleChecks,
+    applicableRuleChecks: applicableRuleChecks.length,
+  };
+}
+
+function renderMonthlyComparison() {
+  if (!monthlyComparisonMonth || !monthlyComparisonResult || !monthlyComparisonNote) return;
+  const monthKey = monthlyComparisonMonth.value;
+  const previousKey = getPreviousMonthKey(monthKey);
+  if (!previousKey) {
+    monthlyComparisonNote.textContent = 'یک ماه معتبر انتخاب کن تا مقایسه نمایش داده شود.';
+    monthlyComparisonResult.replaceChildren();
+    return;
+  }
+  const summaries = [monthKey, previousKey].map((key) => ({
+    key,
+    trades: state.trades.filter((trade) => getTradeDateKey(trade).slice(0, 7) === key),
+  })).map((period) => ({ ...period, summary: summarizeMonthTrades(period.trades) }));
+  const [current, previous] = summaries;
+  const monthLabel = (key) => new Date(`${key}-01T00:00:00`).toLocaleDateString('fa-IR-u-ca-gregory', { year: 'numeric', month: 'long' });
+  const formatMoney = (value) => `${value >= 0 ? '+' : '-'}$${Math.abs(value).toFixed(2)}`;
+  const renderPeriod = ({ key, summary }) => `
+    <section class="monthly-comparison-period">
+      <h3>${escapeHtml(monthLabel(key))}</h3>
+      <p>تعداد معامله: ${summary.total} (بسته: ${summary.closed})</p>
+      <p>سود/ضرر بسته‌شده: ${formatMoney(summary.pnl)}</p>
+      <p>میانگین نمرهٔ فرآیند: ${summary.processAverage === null ? 'دادهٔ کامل ندارد' : `${summary.processAverage.toFixed(0)}/100`} · ${summary.scoredCount} معاملهٔ دارای اطلاعات کامل</p>
+      <p>احساس‌های ثبت‌شده در متن‌ها: ${summary.emotions.length ? summary.emotions.map((item) => `${escapeHtml(item.label)} (${item.count})`).join('، ') : 'پیدا نشد'}</p>
+      <p>اشتباه تکراری: ${summary.repeatedMistakes.length ? summary.repeatedMistakes.map((item) => `${escapeHtml(item.text)} (${item.count})`).join('؛ ') : 'تکرار یکسان پیدا نشد'}</p>
+      <p>قوانین پیش از ورود: قصد رعایت ${summary.followedRuleChecks} از ${summary.applicableRuleChecks} مورد · ${summary.ruleChecks.filter((check) => check.status === 'not-applicable').length} نامربوط</p>
+    </section>`;
+  monthlyComparisonNote.textContent = state.trades.length < 30 || current.summary.total < 30 || previous.summary.total < 30
+    ? `دادهٔ یکی از بازه‌ها کمتر از ۳۰ معامله است؛ داده هنوز کمه و این مقایسه فقط توصیفی است، نه نتیجهٔ آماری قطعی. وضعیت قوانین، قصد پیش از ورود را نشان می‌دهد، نه رعایت واقعی بعد از معامله.`
+    : 'این مقایسه توصیفی است و رابطهٔ احساس‌ها یا قوانین با نتیجه را علت‌ومعلولی ثابت نمی‌کند. وضعیت قوانین، قصد پیش از ورود را نشان می‌دهد، نه رعایت واقعی بعد از معامله.';
+  monthlyComparisonResult.innerHTML = renderPeriod(current) + renderPeriod(previous);
+}
+
 function getOutcomeLabel(trade) {
   if (trade.status === 'open') return 'باز';
   const pnl = tradePnl(trade);
@@ -1889,9 +1973,17 @@ function renderAll() {
   renderSelectedDay();
   renderCheckinHistory();
   renderAfterLossStreak();
+  renderMonthlyComparison();
 }
 
 journalViewButtons.forEach((button) => button.addEventListener('click', () => setJournalView(button.dataset.journalView)));
+if (monthlyComparisonMonth) {
+  const defaultComparisonDate = new Date();
+  defaultComparisonDate.setDate(1);
+  defaultComparisonDate.setMonth(defaultComparisonDate.getMonth() - 1);
+  monthlyComparisonMonth.value = localDateKey(defaultComparisonDate).slice(0, 7);
+  monthlyComparisonMonth.addEventListener('change', renderMonthlyComparison);
+}
 
 function updateApiSettingState(element, configured, name) {
   if (!element) return;
@@ -2592,15 +2684,23 @@ masterChatForm?.addEventListener('submit', async (event) => {
   masterChatInput.value = '';
   masterChatSend.disabled = true;
   masterChatSend.textContent = 'در حال پاسخ...';
+  const nextHistory = masterChatHistory.concat([{ role: 'user', content: message }]).slice(-12);
   try {
     const response = await apiFetch('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history: nextHistory }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || 'پاسخ هوش مصنوعی دریافت نشد.');
     appendMasterMessage('assistant', payload.reply);
+    masterChatHistory = nextHistory.concat([{ role: 'assistant', content: payload.reply }]).slice(-12);
+    if (Number.isFinite(payload.tradeCount)) {
+      const contextNote = payload.omittedTradeCount
+        ? `زمینهٔ پاسخ: ${payload.includedTradeCount} از ${payload.tradeCount} معامله؛ تعدادی از معاملات قدیمی‌تر به محدودیت حجم پیام نرسیدند.`
+        : `زمینهٔ پاسخ: ${payload.includedTradeCount} معاملهٔ ثبت‌شده.`;
+      appendMasterMessage('system', contextNote);
+    }
   } catch (error) {
     appendMasterMessage('assistant', error.message || 'خطا در ارتباط با استاد.');
   } finally {
