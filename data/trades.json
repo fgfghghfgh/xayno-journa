@@ -1,0 +1,76 @@
+[
+  {
+    "id": "step10-month-2",
+    "status": "closed",
+    "token": "STEP10_MONTH_B",
+    "network": "Solana",
+    "address": "",
+    "entryTimeProvided": true,
+    "stopLoss": "9200",
+    "riskLevel": "low",
+    "pnlOutcome": "profit",
+    "journalDate": "2026-01-12",
+    "openedAt": "2026-01-12T10:00:00",
+    "closedAt": "",
+    "entryMarketCap": 11000,
+    "exitMarketCap": 11200,
+    "investAmount": 50,
+    "pnlDollar": 3,
+    "pnlPercent": 6,
+    "txLink": "",
+    "setup": "pullback",
+    "entryReason": "reason",
+    "exitReason": "",
+    "emotion": "fomo",
+    "mistakes": "repeated test mistake",
+    "lesson": "lesson",
+    "notes": "",
+    "images": [],
+    "personalRuleChecks": [
+      {
+        "ruleId": "rule-test",
+        "rule": "test rule",
+        "status": "not-followed"
+      }
+    ],
+    "createdAt": "2026-11-22T09:20:43.787Z",
+    "updatedAt": "2026-11-22T09:20:43.787Z"
+  },
+  {
+    "id": "step10-month-1",
+    "status": "closed",
+    "token": "STEP10_MONTH_A",
+    "network": "Solana",
+    "address": "",
+    "entryTimeProvided": true,
+    "stopLoss": "9500",
+    "riskLevel": "low",
+    "pnlOutcome": "profit",
+    "journalDate": "2026-01-05",
+    "openedAt": "2026-01-05T09:00:00",
+    "closedAt": "",
+    "entryMarketCap": 10000,
+    "exitMarketCap": 9500,
+    "investAmount": 50,
+    "pnlDollar": -5,
+    "pnlPercent": -10,
+    "txLink": "",
+    "setup": "breakout",
+    "entryReason": "reason",
+    "exitReason": "",
+    "emotion": "fear",
+    "mistakes": "repeated test mistake",
+    "lesson": "lesson",
+    "notes": "",
+    "images": [],
+    "personalRuleChecks": [
+      {
+        "ruleId": "rule-test",
+        "rule": "test rule",
+        "status": "followed"
+      }
+    ],
+    "createdAt": "2026-11-22T09:20:43.693Z",
+    "updatedAt": "2026-11-22T09:20:43.693Z"
+  }
+]

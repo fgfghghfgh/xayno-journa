@@ -80,11 +80,16 @@ const preTradeSimilar = document.getElementById('preTradeSimilar');
 const preTradeSetup = document.getElementById('preTradeSetup');
 const preTradeEmotion = document.getElementById('preTradeEmotion');
 const preTradeRuleChecksElement = document.getElementById('preTradeRuleChecks');
+const postTradeRuleReview = document.getElementById('postTradeRuleReview');
+const postTradeRuleList = document.getElementById('postTradeRuleList');
+const postTradeRuleStatus = document.getElementById('postTradeRuleStatus');
 const preTradeStatus = document.getElementById('preTradeStatus');
 const preTradeResult = document.getElementById('preTradeResult');
 let preTradeReviewComplete = false;
 let preTradeFromForm = false;
 let preTradeReviewBusy = false;
+let postTradeReviewComplete = false;
+let pendingPostTradeRuleChecks = [];
 let afterLossReviewBusy = false;
 const dailyCheckinForm = document.getElementById('dailyCheckinForm');
 const checkinFeedback = document.getElementById('checkinFeedback');
@@ -1166,8 +1171,9 @@ function summarizeMonthTrades(trades) {
   const repeatedMistakes = [...mistakeGroups.values()].filter((item) => item.count > 1)
     .sort((left, right) => right.count - left.count).slice(0, 3);
   const ruleChecks = trades.flatMap((trade) => Array.isArray(trade.personalRuleChecks) ? trade.personalRuleChecks : []);
-  const applicableRuleChecks = ruleChecks.filter((check) => check.status === 'followed' || check.status === 'not-followed');
-  const followedRuleChecks = applicableRuleChecks.filter((check) => check.status === 'followed').length;
+  const reviewedRuleChecks = ruleChecks.filter((check) => ['complied', 'not-complied', 'not-applicable'].includes(check.outcomeStatus));
+  const applicableRuleChecks = reviewedRuleChecks.filter((check) => check.outcomeStatus === 'complied' || check.outcomeStatus === 'not-complied');
+  const followedRuleChecks = applicableRuleChecks.filter((check) => check.outcomeStatus === 'complied').length;
   return {
     total: trades.length,
     closed: closed.length,
@@ -1177,6 +1183,7 @@ function summarizeMonthTrades(trades) {
     emotions,
     repeatedMistakes,
     ruleChecks,
+    reviewedRuleChecks,
     followedRuleChecks,
     applicableRuleChecks: applicableRuleChecks.length,
   };
@@ -1206,11 +1213,11 @@ function renderMonthlyComparison() {
       <p>میانگین نمرهٔ فرآیند: ${summary.processAverage === null ? 'دادهٔ کامل ندارد' : `${summary.processAverage.toFixed(0)}/100`} · ${summary.scoredCount} معاملهٔ دارای اطلاعات کامل</p>
       <p>احساس‌های ثبت‌شده در متن‌ها: ${summary.emotions.length ? summary.emotions.map((item) => `${escapeHtml(item.label)} (${item.count})`).join('، ') : 'پیدا نشد'}</p>
       <p>اشتباه تکراری: ${summary.repeatedMistakes.length ? summary.repeatedMistakes.map((item) => `${escapeHtml(item.text)} (${item.count})`).join('؛ ') : 'تکرار یکسان پیدا نشد'}</p>
-      <p>قوانین پیش از ورود: قصد رعایت ${summary.followedRuleChecks} از ${summary.applicableRuleChecks} مورد · ${summary.ruleChecks.filter((check) => check.status === 'not-applicable').length} نامربوط</p>
+      <p>قوانین پس از بستن: رعایت ${summary.followedRuleChecks} از ${summary.applicableRuleChecks} مورد · ${summary.ruleChecks.length - summary.reviewedRuleChecks.length} بررسی‌نشده</p>
     </section>`;
   monthlyComparisonNote.textContent = state.trades.length < 30 || current.summary.total < 30 || previous.summary.total < 30
-    ? `دادهٔ یکی از بازه‌ها کمتر از ۳۰ معامله است؛ داده هنوز کمه و این مقایسه فقط توصیفی است، نه نتیجهٔ آماری قطعی. وضعیت قوانین، قصد پیش از ورود را نشان می‌دهد، نه رعایت واقعی بعد از معامله.`
-    : 'این مقایسه توصیفی است و رابطهٔ احساس‌ها یا قوانین با نتیجه را علت‌ومعلولی ثابت نمی‌کند. وضعیت قوانین، قصد پیش از ورود را نشان می‌دهد، نه رعایت واقعی بعد از معامله.';
+    ? `دادهٔ یکی از بازه‌ها کمتر از ۳۰ معامله است؛ داده هنوز کمه و این مقایسه فقط توصیفی است، نه نتیجهٔ آماری قطعی. فقط پیگیری‌هایی شمرده می‌شوند که پس از بستن معامله ثبت شده‌اند.`
+    : 'این مقایسه توصیفی است و رابطهٔ احساس‌ها یا قوانین با نتیجه را علت‌ومعلولی ثابت نمی‌کند. فقط پیگیری‌های پس از بستن معامله شمرده می‌شوند.';
   monthlyComparisonResult.innerHTML = renderPeriod(current) + renderPeriod(previous);
 }
 
@@ -1515,7 +1522,7 @@ function renderSelectedDay() {
         ${trade.emotion ? `<div class="trade-meta">حالت ذهنی: ${escapeHtml(trade.emotion)}</div>` : ''}
         ${trade.mistakes ? `<div class="trade-meta">اشتباه‌ها: ${escapeHtml(trade.mistakes)}</div>` : ''}
         ${trade.lesson ? `<div class="trade-meta">درس: ${escapeHtml(trade.lesson)}</div>` : ''}
-        ${Array.isArray(trade.personalRuleChecks) && trade.personalRuleChecks.length ? `<div class="trade-meta">ثبت پیش از ورود: ${trade.personalRuleChecks.map((check) => `${escapeHtml(check.rule)} — ${check.status === 'followed' ? 'قصد رعایت دارم' : check.status === 'not-followed' ? 'قصد رعایت ندارم' : 'نامربوط'}`).join(' · ')}</div>` : ''}
+        ${Array.isArray(trade.personalRuleChecks) && trade.personalRuleChecks.length ? `<div class="trade-meta">قوانین: ${trade.personalRuleChecks.map((check) => `${escapeHtml(check.rule)} — پیش از ورود: ${check.status === 'followed' ? 'قصد رعایت داشتم' : check.status === 'not-followed' ? 'قصد رعایت نداشتم' : 'نامربوط'}${check.outcomeStatus ? ` · پس از بستن: ${check.outcomeStatus === 'complied' ? 'رعایت شد' : check.outcomeStatus === 'not-complied' ? 'رعایت نشد' : 'نامربوط'}` : ''}`).join(' · ')}</div>` : ''}
         ${trade.notes ? `<div class="trade-meta">${escapeHtml(trade.notes)}</div>` : ''}
         ${Array.isArray(trade.images) && trade.images.length ? `<div class="image-previews">${trade.images.map((image, index) => { const source = safeImageSource(image); return source ? `<img src="${escapeHtml(source)}" alt="تصویر معامله ${index + 1}" loading="lazy">` : ''; }).join('')}</div>` : ''}
         <div class="trade-actions">
@@ -1575,6 +1582,8 @@ function fillForm(trade) {
 function openFormForEdit(id) {
   const trade = state.trades.find((item) => item.id === id);
   if (!trade) return;
+  postTradeReviewComplete = false;
+  pendingPostTradeRuleChecks = [];
   fillForm(trade);
   openTradeForm();
 }
@@ -1583,7 +1592,10 @@ function resetForm() {
   tradeForm.reset();
   preTradeReviewComplete = false;
   preTradeFromForm = false;
+  postTradeReviewComplete = false;
+  pendingPostTradeRuleChecks = [];
   if (preTradeCheck) preTradeCheck.hidden = true;
+  if (postTradeRuleReview) postTradeRuleReview.hidden = true;
   document.getElementById('tradeId').value = '';
   document.getElementById('journalDate').value = state.selectedDate;
   state.formImages = [];
@@ -1759,6 +1771,45 @@ function renderPreTradeRuleChecks() {
   }
 }
 
+function showPostTradeRuleReview(checks) {
+  postTradeRuleList.replaceChildren();
+  for (const [index, check] of checks.entries()) {
+    const label = document.createElement('label');
+    const rule = document.createElement('span');
+    rule.textContent = check.rule || 'قانون شخصی';
+    const select = document.createElement('select');
+    select.dataset.ruleId = check.ruleId;
+    select.dataset.ruleIndex = String(index);
+    select.innerHTML = '<option value="">انتخاب کن</option><option value="complied">بله، رعایت شد</option><option value="not-complied">نه، رعایت نشد</option><option value="not-applicable">این قانون نامربوط بود</option>';
+    select.value = check.outcomeStatus || '';
+    label.append(rule, select);
+    postTradeRuleList.appendChild(label);
+  }
+  postTradeRuleStatus.textContent = '';
+  postTradeRuleReview.hidden = false;
+}
+
+function continuePostTradeRuleReview() {
+  const selects = [...postTradeRuleList.querySelectorAll('select')];
+  if (selects.some((select) => !select.value)) {
+    postTradeRuleStatus.textContent = 'برای هر قانون یک پاسخ انتخاب کن؛ اگر مربوط نبود، «نامربوط» را بزن.';
+    return;
+  }
+  const existingTrade = state.trades.find((trade) => trade.id === document.getElementById('tradeId').value);
+  if (!existingTrade || !Array.isArray(existingTrade.personalRuleChecks)) {
+    postTradeRuleStatus.textContent = 'قوانین این معامله پیدا نشدند. فرم را نبستم و داده‌ای تغییر نکرد.';
+    return;
+  }
+  pendingPostTradeRuleChecks = existingTrade.personalRuleChecks.map((check, index) => ({
+    ...check,
+    outcomeStatus: selects[index].value,
+    outcomeRecordedAt: new Date().toISOString(),
+  }));
+  postTradeReviewComplete = true;
+  postTradeRuleReview.hidden = true;
+  tradeForm.requestSubmit();
+}
+
 async function saveTrade(event) {
   event.preventDefault();
   const values = getFormValues();
@@ -1785,18 +1836,26 @@ async function saveTrade(event) {
     return;
   }
 
+  const existingTrade = state.trades.find((trade) => trade.id === values.id);
+  const currentRuleChecks = preTradeReviewComplete
+    ? [...preTradeRuleChecksElement.querySelectorAll('select')].map((select) => ({
+      ruleId: select.dataset.ruleId,
+      rule: personalRules.find((item) => item.id === select.dataset.ruleId)?.rule || '',
+      status: select.value,
+    }))
+    : (existingTrade?.personalRuleChecks || []);
+  if (existingTrade?.status === 'open' && values.status === 'closed'
+    && currentRuleChecks.length && !postTradeReviewComplete) {
+    showPostTradeRuleReview(currentRuleChecks);
+    return;
+  }
+
   const submitButton = tradeForm.querySelector('button[type="submit"]');
   const nextTrade = {
     id: values.id || `trade_${Date.now()}`,
     ...values,
-    personalRuleChecks: preTradeReviewComplete
-      ? [...preTradeRuleChecksElement.querySelectorAll('select')].map((select) => ({
-        ruleId: select.dataset.ruleId,
-        rule: personalRules.find((item) => item.id === select.dataset.ruleId)?.rule || '',
-        status: select.value,
-      }))
-      : (state.trades.find((trade) => trade.id === values.id)?.personalRuleChecks || []),
-    createdAt: state.trades.find((trade) => trade.id === values.id)?.createdAt || new Date().toISOString(),
+    personalRuleChecks: postTradeReviewComplete ? pendingPostTradeRuleChecks : currentRuleChecks,
+    createdAt: existingTrade?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
   submitButton.disabled = true;
@@ -2735,6 +2794,13 @@ preTradeEmotion?.addEventListener('input', renderPreTradeWarnings);
 document.getElementById('sendAfterLossRoom')?.addEventListener('click', reviewAfterLoss);
 document.getElementById('runPreTradeReview')?.addEventListener('click', reviewBeforeEntry);
 document.getElementById('continueAfterPreTrade')?.addEventListener('click', continueAfterPreTrade);
+document.getElementById('savePostTradeRuleReview')?.addEventListener('click', continuePostTradeRuleReview);
+document.getElementById('cancelPostTradeRuleReview')?.addEventListener('click', () => {
+  postTradeRuleReview.hidden = true;
+  postTradeReviewComplete = false;
+  pendingPostTradeRuleChecks = [];
+  postTradeRuleStatus.textContent = 'فرم معامله باز است؛ برای ثبت، دوباره ذخیره را بزن و پیگیری را کامل کن.';
+});
 document.getElementById('cancelPreTrade')?.addEventListener('click', () => {
   preTradeCheck.hidden = true;
   preTradeFromForm = false;

@@ -371,6 +371,16 @@
       .pretrade-rule-checks > strong { color: var(--text-muted); font-size: 11px; }
       .pretrade-rule-check { display: grid; gap: 5px; color: var(--text-dim); font-size: 11px; }
       .pretrade-rule-check select { min-height: 38px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 9px; }
+      .posttrade-overlay[hidden] { display: none; }
+      .posttrade-overlay { position: fixed; inset: 0; z-index: 10050; display: grid; place-items: center; padding: 16px; background: rgba(0,0,0,.78); backdrop-filter: blur(7px); }
+      .posttrade-card { width: min(520px, 100%); max-height: 90vh; overflow-y: auto; padding: 18px; border: 1px solid rgba(255,255,255,.12); border-radius: 13px; background: #11191e; }
+      .posttrade-card h2 { margin: 0 0 7px; color: var(--text); font-size: 15px; }
+      .posttrade-card p { color: var(--text-dim); font-size: 11px; line-height: 1.8; }
+      .posttrade-rule-list { display: grid; gap: 9px; margin: 12px 0; }
+      .posttrade-rule-list label { display: grid; gap: 5px; color: var(--text-muted); font-size: 11px; }
+      .posttrade-rule-list select { min-height: 38px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 9px; }
+      .posttrade-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .posttrade-actions button { min-height: 38px; border: 1px solid rgba(0,245,160,.2); border-radius: 8px; background: rgba(0,245,160,.08); color: var(--green); padding: 0 12px; font-weight: 750; cursor: pointer; }
       .checkin-card { grid-column: 1 / -1; }
       .checkin-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
       .checkin-form label { display: grid; gap: 7px; color: var(--text-muted); font-size: 12px; }
@@ -1089,6 +1099,18 @@
               <h2>نکته دربارهٔ کلیدهای دیگر سایت</h2>
               <p>کلیدهای Helius و Birdeye همچنان فقط در Environment سرور تنظیم می‌شوند. DexScreener برای قابلیت فعلی کلید نمی‌خواهد. کلید قدیمی <code>AI_API_KEY</code> تا زمان تنظیم کلیدهای جداگانه، به‌عنوان جایگزین سازگار باقی می‌ماند.</p>
             </article>
+          </section>
+          <section id="postTradeRuleReview" class="posttrade-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="postTradeRuleTitle">
+            <div class="posttrade-card">
+              <h2 id="postTradeRuleTitle">پیگیری قوانین پس از بستن</h2>
+              <p>حالا که معامله بسته شده، صادقانه ثبت کن هر قانون را واقعاً رعایت کردی یا نه. «نامربوط» هم پاسخ معتبر است؛ این بررسی قضاوت یا سیگنال معامله نیست.</p>
+              <div id="postTradeRuleList" class="posttrade-rule-list"></div>
+              <div id="postTradeRuleStatus" class="pretrade-status" role="status" aria-live="polite"></div>
+              <div class="posttrade-actions">
+                <button id="savePostTradeRuleReview" type="button">ذخیرهٔ پیگیری و بستن معامله</button>
+                <button id="cancelPostTradeRuleReview" type="button">برگشت به فرم</button>
+              </div>
+            </div>
           </section>
 
           <section id="masterView" class="master-view" hidden>

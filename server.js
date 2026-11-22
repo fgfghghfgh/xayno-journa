@@ -419,6 +419,7 @@ app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
         ? trade.personalRuleChecks.slice(0, 30).map((check) => ({
           rule: String(check.rule || '').slice(0, 300),
           status: String(check.status || '').slice(0, 30),
+          outcomeStatus: String(check.outcomeStatus || '').slice(0, 30),
         }))
         : [],
     };
@@ -1386,6 +1387,8 @@ app.post('/api/trades', async (req, res) => {
           ruleId: check.ruleId.slice(0, 100),
           rule: String(check.rule || '').slice(0, 500),
           status: check.status,
+          outcomeStatus: ['complied', 'not-complied', 'not-applicable'].includes(check.outcomeStatus) ? check.outcomeStatus : '',
+          outcomeRecordedAt: typeof check.outcomeRecordedAt === 'string' ? check.outcomeRecordedAt.slice(0, 40) : '',
         }))
       : (existingTrade?.personalRuleChecks || []),
     createdAt: payload.createdAt || new Date().toISOString(),
