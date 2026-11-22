@@ -78,6 +78,9 @@ const masterChatSend = document.getElementById('masterChatSend');
 const masterReportButton = document.getElementById('masterReportBtn');
 const masterReportStatus = document.getElementById('masterReportStatus');
 const masterReportResult = document.getElementById('masterReportResult');
+const weeklyCoachReportStatus = document.getElementById('weeklyCoachReportStatus');
+const weeklyCoachReportResult = document.getElementById('weeklyCoachReportResult');
+let weeklyCoachReportBusy = false;
 const monthlyComparisonMonth = document.getElementById('monthlyComparisonMonth');
 const monthlyComparisonNote = document.getElementById('monthlyComparisonNote');
 const monthlyComparisonResult = document.getElementById('monthlyComparisonResult');
@@ -132,6 +135,8 @@ const preTradeStop = document.getElementById('preTradeStop');
 const preTradeSimilar = document.getElementById('preTradeSimilar');
 const preTradeSetup = document.getElementById('preTradeSetup');
 const preTradeEmotion = document.getElementById('preTradeEmotion');
+const preTradeSetupField = document.getElementById('preTradeSetupField');
+const preTradeEmotionField = document.getElementById('preTradeEmotionField');
 const preTradeRuleChecksElement = document.getElementById('preTradeRuleChecks');
 const postTradeRuleReview = document.getElementById('postTradeRuleReview');
 const postTradeRuleList = document.getElementById('postTradeRuleList');
@@ -141,6 +146,8 @@ const preTradeResult = document.getElementById('preTradeResult');
 let preTradeReviewComplete = false;
 let preTradeFromForm = false;
 let preTradeReviewBusy = false;
+let preTradeUrgencyMode = false;
+let preTradeUrgencyCountdown = 0;
 let pendingPostTradeReviewId = '';
 let afterLossReviewBusy = false;
 const dailyCheckinForm = document.getElementById('dailyCheckinForm');
@@ -960,16 +967,23 @@ async function apiFetch(url, options = {}) {
   return fetch(url, { ...options, headers, credentials: 'omit', cache: 'no-store' });
 }
 
-function showJournalToast(trade) {
+function showJournalToast(trade, coachFeedback = '') {
   if (!pushToast) return;
-  pushToast.querySelector('[data-push-toast-body]').textContent = trade?.token ? `${trade.token} به ژورنال اضافه شد` : 'یک ژورنال تازه ثبت شد';
+  const title = pushToast.querySelector('.push-toast-copy strong');
+  const body = pushToast.querySelector('[data-push-toast-body]');
+  pushToast.classList.toggle('has-coach-feedback', Boolean(coachFeedback));
+  title.textContent = coachFeedback ? 'بازخورد استاد' : 'ژورنال جدید ثبت شد';
+  body.textContent = coachFeedback
+    ? `${trade?.token ? `${trade.token} · ` : ''}${coachFeedback}`
+    : trade?.token ? `${trade.token} به ژورنال اضافه شد` : 'یک ژورنال تازه ثبت شد';
   pushToast.hidden = false;
   requestAnimationFrame(() => pushToast.classList.add('visible'));
   clearTimeout(pushToastTimer);
   pushToastTimer = window.setTimeout(() => {
     pushToast.classList.remove('visible');
+    pushToast.classList.remove('has-coach-feedback');
     window.setTimeout(() => { pushToast.hidden = true; }, 250);
-  }, 4200);
+  }, coachFeedback ? 9000 : 4200);
 }
 
 function renderImagePreviews() {
@@ -1623,6 +1637,7 @@ function setJournalView(view) {
   if (master) {
     renderDailyCheckin();
     renderAfterLossStreak();
+    loadWeeklyCoachReport();
   }
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
@@ -1825,6 +1840,7 @@ function resetForm() {
   tradeForm.reset();
   preTradeReviewComplete = false;
   preTradeFromForm = false;
+  resetPreTradeUrgencyMode();
   if (preTradeCheck) preTradeCheck.hidden = true;
   document.getElementById('tradeId').value = '';
   document.getElementById('journalDate').value = state.selectedDate;
@@ -1953,6 +1969,11 @@ function renderPreTradeWarnings() {
   const container = document.getElementById('preTradeWarnings');
   if (!container) return;
   container.replaceChildren();
+  if (preTradeUrgencyMode) {
+    container.textContent = 'استاد فقط معامله‌های زیان‌ده ثبت‌شده را برای نمونهٔ مشابه بررسی می‌کند؛ تصمیم با خودت است.';
+    container.className = 'pretrade-warning neutral';
+    return;
+  }
   const matches = findSimilarLosses(preTradeSetup.value, preTradeEmotion.value);
   if (!matches.length) {
     container.textContent = preTradeSetup.value.trim() || preTradeEmotion.value.trim()
@@ -2121,7 +2142,10 @@ async function saveTrade(event) {
     const response = await apiFetch('/api/trades', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(nextTrade),
+      body: JSON.stringify({
+        ...nextTrade,
+        coachConversationId: activeConversation?.conversationId || '',
+      }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.message || 'ذخیره در سرور انجام نشد.');
@@ -2135,7 +2159,34 @@ async function saveTrade(event) {
     resetForm();
     renderAll();
     updateSyncStatus(true);
-    if (existingIndex < 0) showJournalToast(payload.trade);
+    if (existingIndex < 0) {
+      const feedback = payload.coachFeedback;
+      if (feedback?.message?.content) {
+        const conversationIndex = coachConversations.findIndex((item) => item.conversationId === feedback.conversationId);
+        const targetConversation = conversationIndex >= 0
+          ? Object.assign(coachConversations[conversationIndex], feedback.conversation || {})
+          : feedback.conversation;
+        if (targetConversation) {
+          targetConversation.preview = feedback.message.content.slice(0, 240);
+          if (conversationIndex < 0) {
+            coachConversations.unshift(targetConversation);
+          }
+        }
+        if (activeConversation?.conversationId === feedback.conversationId) {
+          Object.assign(activeConversation, feedback.conversation || {}, {
+            preview: feedback.message.content.slice(0, 240),
+          });
+          masterChatHistory.push(feedback.message);
+          renderMasterChatTranscript();
+        }
+        renderCoachConversationList();
+        showJournalToast(payload.trade, feedback.message.content);
+      } else {
+        showJournalToast(payload.trade, payload.coachFeedbackError
+          ? 'معامله ثبت شد؛ بررسی بازخورد خودکار فعلاً انجام نشد.'
+          : '');
+      }
+    }
     if (shouldReviewAfterSave) showPostTradeRuleReview(payload.trade.id, payload.trade.personalRuleChecks);
     else if (payload.trade.address) window.setTimeout(() => openTradeChart(payload.trade), 0);
   } catch (error) {
@@ -2190,6 +2241,65 @@ async function requestCoachQuickReview(kind, answers) {
   return payload;
 }
 
+function stopPreTradeUrgencyCountdown() {
+  if (preTradeUrgencyCountdown) window.clearInterval(preTradeUrgencyCountdown);
+  preTradeUrgencyCountdown = 0;
+}
+
+function resetPreTradeUrgencyMode() {
+  stopPreTradeUrgencyCountdown();
+  preTradeUrgencyMode = false;
+  if (preTradeSetupField) preTradeSetupField.hidden = false;
+  if (preTradeEmotionField) preTradeEmotionField.hidden = false;
+  document.getElementById('preTradeTitle').textContent = 'مکث قبل از ورود';
+  document.getElementById('preTradeDescription').textContent = 'بدون عجله، پنج مورد را روشن کن. پاسخ‌ها را با ژورنال مرور می‌کنیم؛ استاد نمی‌گوید وارد معامله بشوی یا نه.';
+  document.getElementById('runPreTradeReview').textContent = 'بررسی با استاد';
+  document.getElementById('runPreTradeReview').disabled = preTradeReviewBusy;
+  document.getElementById('continueAfterPreTrade').textContent = preTradeFromForm
+    ? 'با تصمیم خودم ادامه می‌دهم'
+    : 'پایان مکث';
+  document.getElementById('cancelPreTrade').textContent = 'بازگشت به ثبت';
+}
+
+function openUrgentEntryMode() {
+  preTradeFromForm = false;
+  preTradeWhy.value = '';
+  preTradeStop.value = '';
+  preTradeSimilar.value = '';
+  preTradeSetup.value = '';
+  preTradeEmotion.value = '';
+  preTradeUrgencyMode = true;
+  preTradeSetupField.hidden = true;
+  preTradeEmotionField.hidden = true;
+  document.getElementById('preTradeTitle').textContent = 'حالت «الان عجله دارم»';
+  document.getElementById('preTradeDescription').textContent = '۲۰ ثانیه مکث؛ فقط سه پاسخ کوتاه. استاد نمونه‌های ژورنالت را مرور می‌کند، اما به‌جایت تصمیم نمی‌گیرد.';
+  document.getElementById('runPreTradeReview').textContent = 'مرور سریع با استاد';
+  document.getElementById('runPreTradeReview').disabled = true;
+  document.getElementById('continueAfterPreTrade').textContent = 'پایان مکث؛ تصمیم با من';
+  document.getElementById('cancelPreTrade').textContent = 'بازگشت به چت';
+  preTradeStatus.textContent = '';
+  preTradeResult.hidden = true;
+  preTradeResult.textContent = '';
+  renderPreTradeRuleChecks();
+  renderPreTradeWarnings();
+  preTradeCheck.hidden = false;
+
+  const readyAt = Date.now() + 20_000;
+  const updateCountdown = () => {
+    const remaining = Math.max(0, Math.ceil((readyAt - Date.now()) / 1000));
+    if (remaining > 0) {
+      preTradeStatus.textContent = `${remaining} ثانیه مکث؛ آرام نفس بکش و پاسخ‌ها را بدون عجله بنویس.`;
+      return;
+    }
+    stopPreTradeUrgencyCountdown();
+    document.getElementById('runPreTradeReview').disabled = false;
+    preTradeStatus.textContent = 'مکث کامل شد؛ اگر خواستی پاسخ‌ها را با ژورنال مرور کن.';
+  };
+  updateCountdown();
+  preTradeUrgencyCountdown = window.setInterval(updateCountdown, 250);
+  preTradeWhy.focus();
+}
+
 async function reviewAfterLoss() {
   const answers = {
     whatHappened: document.getElementById('afterLossEvent').value.trim(),
@@ -2225,19 +2335,28 @@ async function reviewBeforeEntry() {
     setup: preTradeSetup.value.trim(),
     emotion: preTradeEmotion.value.trim(),
   };
-  if (Object.values(answers).some((answer) => !answer)) {
-    preTradeStatus.textContent = 'هر پنج مورد را پاسخ بده؛ اگر چیزی را نمی‌دانی، صریح بنویس «نمی‌دانم».';
+  const requiredAnswers = preTradeUrgencyMode
+    ? [answers.why, answers.stopLoss, answers.similar]
+    : Object.values(answers);
+  if (requiredAnswers.some((answer) => !answer)) {
+    preTradeStatus.textContent = preTradeUrgencyMode
+      ? 'دلیل ورود، حد ضرر و معاملهٔ مشابه را کوتاه پاسخ بده؛ اگر موردی نامشخص است بنویس «نمی‌دانم».'
+      : 'هر پنج مورد را پاسخ بده؛ اگر چیزی را نمی‌دانی، صریح بنویس «نمی‌دانم».';
     return;
   }
   preTradeReviewBusy = true;
   document.getElementById('runPreTradeReview').disabled = true;
-  preTradeStatus.textContent = 'استاد دارد پاسخ‌ها را با الگوهای ژورنال می‌سنجد...';
+  preTradeStatus.textContent = preTradeUrgencyMode
+    ? 'استاد پاسخ‌ها را فقط با نمونه‌های زیان‌ده ثبت‌شده مقایسه می‌کند...'
+    : 'استاد دارد پاسخ‌ها را با الگوهای ژورنال می‌سنجد...';
   preTradeResult.hidden = true;
   try {
-    const result = await requestCoachQuickReview('pre-entry', answers);
+    const result = await requestCoachQuickReview(preTradeUrgencyMode ? 'urgent-entry' : 'pre-entry', answers);
     preTradeResult.textContent = result.reply;
     preTradeResult.hidden = false;
-    preTradeStatus.textContent = `${result.tradeCount} معاملهٔ اخیر برای زمینه بررسی شد. تصمیم نهایی با خودت است.`;
+    preTradeStatus.textContent = preTradeUrgencyMode
+      ? `${result.tradeCount} نمونهٔ زیان‌ده مرور شد؛ از مجموع ${result.totalTradeCount} معامله. پاسخ‌ها ذخیره نمی‌شوند و تصمیم با خودت است.`
+      : `${result.tradeCount} معاملهٔ اخیر برای زمینه بررسی شد. تصمیم نهایی با خودت است.`;
   } catch (error) {
     preTradeStatus.textContent = `${error.message || 'پاسخ استاد در دسترس نیست.'} می‌توانی پرسش‌ها را خودت مرور کنی یا به ثبت برگردی.`;
   } finally {
@@ -2250,6 +2369,11 @@ function continueAfterPreTrade() {
   const answers = [preTradeWhy.value.trim(), preTradeStop.value.trim(), preTradeSimilar.value.trim()];
   if (answers.some((answer) => !answer)) {
     preTradeStatus.textContent = 'دلیل ورود، حد ضرر و معاملهٔ مشابه را پاسخ بده؛ اگر موردی نامشخص است بنویس «نمی‌دانم». ستاپ و حالت ذهنی را هم وارد کن.';
+    return;
+  }
+  if (preTradeUrgencyMode) {
+    preTradeCheck.hidden = true;
+    resetPreTradeUrgencyMode();
     return;
   }
   if (!preTradeSetup.value.trim() || !preTradeEmotion.value.trim()) {
@@ -3284,8 +3408,29 @@ function renderCoachMemories() {
   coachMemories.forEach((memory) => {
     const item = document.createElement('div');
     item.className = 'coach-memory-item';
+    const copy = document.createElement('div');
+    copy.className = 'coach-memory-copy';
+    const source = document.createElement('strong');
+    if (memory.memorySource === 'user_statement') {
+      source.textContent = 'گفتهٔ مستقیم تو';
+      source.className = 'coach-memory-source user-statement';
+    } else if (memory.memorySource === 'coach_inference') {
+      source.textContent = Number(memory.confidence) < 0.6 || !memory.evidence
+        ? 'برداشت استاد · شاهد ثبت‌نشده'
+        : `برداشت استاد · اطمینان ${Math.round(Number(memory.confidence) * 100)}٪`;
+      source.className = 'coach-memory-source coach-inference';
+    } else {
+      source.textContent = 'یادداشت کاربر';
+      source.className = 'coach-memory-source user-note';
+    }
     const content = document.createElement('span');
     content.textContent = memory.content;
+    copy.append(source, content);
+    if (memory.evidence) {
+      const evidence = document.createElement('small');
+      evidence.textContent = `شاهد: ${memory.evidence}`;
+      copy.appendChild(evidence);
+    }
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'danger';
@@ -3303,7 +3448,7 @@ function renderCoachMemories() {
         coachMemoryStatus.textContent = error.message || 'حذف حافظه ناموفق بود.';
       }
     });
-    item.append(content, remove);
+    item.append(copy, remove);
     coachMemoryList.appendChild(item);
   });
 }
@@ -3314,7 +3459,7 @@ async function loadCoachMemories() {
   if (!response.ok || !Array.isArray(payload.memories)) throw new Error(payload.message || 'بارگذاری حافظهٔ استاد ناموفق بود.');
   coachMemories = payload.memories;
   renderCoachMemories();
-  coachMemoryStatus.textContent = `${coachMemories.length} نکته در حافظهٔ استاد است؛ نکته‌های تازه خودکار از مکالمه‌ها استخراج می‌شوند.`;
+  coachMemoryStatus.textContent = `${coachMemories.length} نکته در حافظه است؛ گفته‌های مستقیم و برداشت‌های استاد جداگانه مشخص شده‌اند. اگر برداشتی اشتباه است، در چت اصلاحش کن.`;
 }
 
 let coachConversationSearchTimer = 0;
@@ -3659,6 +3804,46 @@ masterReportButton?.addEventListener('click', async () => {
   }
 });
 
+async function loadWeeklyCoachReport(attempt = 0) {
+  if (!weeklyCoachReportStatus || weeklyCoachReportBusy) return;
+  weeklyCoachReportBusy = true;
+  weeklyCoachReportStatus.textContent = 'گزارش هفتگی بررسی می‌شود؛ اگر داده‌ای تازه باشد، استاد آن را می‌سازد...';
+  try {
+    const response = await apiFetch('/api/coach/weekly-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'بارگذاری گزارش هفتگی ناموفق بود.');
+    if (payload.pending) {
+      weeklyCoachReportStatus.textContent = 'گزارش این هفته در حال آماده‌شدن است...';
+      if (attempt < 3 && activeJournalView === 'master') {
+        window.setTimeout(() => loadWeeklyCoachReport(attempt + 1), 1500);
+      } else {
+        weeklyCoachReportStatus.textContent = 'ساخت گزارش هنوز ادامه دارد؛ چند لحظه بعد دوباره این صفحه را باز کن.';
+      }
+      return;
+    }
+    if (typeof payload.report !== 'string' || !payload.report.trim()) {
+      throw new Error('گزارش هفتگی پاسخ خالی داشت؛ اطلاعات قبلی تغییر نکرد.');
+    }
+    weeklyCoachReportResult.textContent = payload.report;
+    const range = payload.weekStart && payload.weekEnd
+      ? `${new Date(`${payload.weekStart}T00:00:00Z`).toLocaleDateString('fa-IR')} تا ${new Date(`${payload.weekEnd}T00:00:00Z`).toLocaleDateString('fa-IR')}`
+      : 'این هفته';
+    const generatedAt = payload.generatedAt
+      ? new Date(payload.generatedAt).toLocaleString('fa-IR')
+      : '';
+    const cacheNote = payload.cached ? 'از گزارش ذخیره‌شده' : 'گزارش تازه';
+    weeklyCoachReportStatus.textContent = `${range} · ${payload.weeklyTradeCount} معاملهٔ این هفته از ${payload.tradeCount} معاملهٔ ژورنال · ${cacheNote}${generatedAt ? ` · ${generatedAt}` : ''}`;
+  } catch (error) {
+    weeklyCoachReportStatus.textContent = error.message || 'ساخت گزارش هفتگی ناموفق بود.';
+  } finally {
+    weeklyCoachReportBusy = false;
+  }
+}
+
 function appendMasterMessage(role, text) {
   if (!masterChatLog) return;
   masterChatLog.hidden = false;
@@ -3773,6 +3958,7 @@ document.getElementById('openAfterLossRoom')?.addEventListener('click', () => {
   document.getElementById('afterLossEvent').focus();
 });
 document.getElementById('openPreTradeRoom')?.addEventListener('click', () => {
+  resetPreTradeUrgencyMode();
   preTradeFromForm = false;
   document.getElementById('continueAfterPreTrade').textContent = 'پایان مکث';
   preTradeWhy.value = '';
@@ -3787,6 +3973,7 @@ document.getElementById('openPreTradeRoom')?.addEventListener('click', () => {
   preTradeCheck.hidden = false;
   renderPreTradeWarnings();
 });
+document.getElementById('openUrgentEntryMode')?.addEventListener('click', openUrgentEntryMode);
 preTradeSetup?.addEventListener('input', renderPreTradeWarnings);
 preTradeEmotion?.addEventListener('input', renderPreTradeWarnings);
 document.getElementById('sendAfterLossRoom')?.addEventListener('click', reviewAfterLoss);
@@ -3807,6 +3994,7 @@ document.getElementById('cancelPreTrade')?.addEventListener('click', () => {
   preTradeCheck.hidden = true;
   preTradeFromForm = false;
   preTradeReviewComplete = false;
+  resetPreTradeUrgencyMode();
 });
 
 document.getElementById('newTradeBtn').addEventListener('click', () => {
