@@ -27,6 +27,9 @@ const AI_CHAT_MODEL = process.env.AI_CHAT_MODEL || AI_MODEL;
 const AI_REPORT_API_KEY = process.env.AI_REPORT_API_KEY || AI_API_KEY;
 const AI_REPORT_API_URL = process.env.AI_REPORT_API_URL || AI_API_URL;
 const AI_REPORT_MODEL = process.env.AI_REPORT_MODEL || AI_MODEL;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash-lite';
+const GEMINI_REPORT_MODEL = process.env.GEMINI_REPORT_MODEL || 'gemini-2.5-flash';
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && JOURNAL_ACCESS_KEY);
 const journalChartCache = new Map();
@@ -135,6 +138,102 @@ async function saveCoachingSession(session) {
   });
   if (!response.ok) throw new Error(`Coaching session write failed (${response.status}).`);
   return saved;
+}
+
+const CENTRAL_COLLECTIONS = {
+  checkins: 'journal_checkins',
+  personal_rules: 'journal_personal_rules',
+  assignments: 'journal_assignments',
+  contracts: 'journal_contracts',
+  lesson_library: 'journal_lesson_library',
+  memories: 'journal_memories',
+  monthly_summaries: 'journal_monthly_summaries',
+  chat_history: 'journal_chat_history',
+};
+
+async function readCentralCollection(collection) {
+  if (!Object.prototype.hasOwnProperty.call(CENTRAL_COLLECTIONS, collection)) {
+    throw new Error('Unknown central collection.');
+  }
+  if (REMOTE_ENABLED) {
+    const table = CENTRAL_COLLECTIONS[collection];
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=id,created_at,updated_at,payload&order=updated_at.desc&limit=5000`, {
+      headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) throw new Error(`Central ${collection} read failed (${response.status}).`);
+    const records = await response.json();
+    return records.map((record) => ({
+      ...record.payload,
+      id: record.id,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at,
+    }));
+  }
+  const file = path.join(ROOT, 'data', `central-${collection}.json`);
+  if (!fs.existsSync(file)) return [];
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+async function saveCentralRecord(collection, record) {
+  if (!Object.prototype.hasOwnProperty.call(CENTRAL_COLLECTIONS, collection)) {
+    throw new Error('Unknown central collection.');
+  }
+  if (!record || typeof record !== 'object' || typeof record.id !== 'string' || !record.id.trim()) {
+    throw new Error('A valid record id is required.');
+  }
+  const createdAt = typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+  const saved = { ...record, id: record.id.slice(0, 200), createdAt, updatedAt };
+  if (!REMOTE_ENABLED) {
+    const records = await readCentralCollection(collection);
+    const existing = records.find((item) => item.id === saved.id);
+    const merged = existing
+      ? records.map((item) => item.id === saved.id ? saved : item)
+      : [saved, ...records];
+    const file = path.join(ROOT, 'data', `central-${collection}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temporaryFile = `${file}.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(merged, null, 2));
+    fs.renameSync(temporaryFile, file);
+    return saved;
+  }
+  const table = CENTRAL_COLLECTIONS[collection];
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=id`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=representation',
+    },
+    body: JSON.stringify({ id: saved.id, created_at: createdAt, updated_at: updatedAt, payload: saved }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Central ${collection} write failed (${response.status}).`);
+  return saved;
+}
+
+async function deleteCentralRecord(collection, id) {
+  if (!Object.prototype.hasOwnProperty.call(CENTRAL_COLLECTIONS, collection)) {
+    throw new Error('Unknown central collection.');
+  }
+  if (!REMOTE_ENABLED) {
+    const records = await readCentralCollection(collection);
+    const merged = records.filter((item) => item.id !== id);
+    const file = path.join(ROOT, 'data', `central-${collection}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(merged, null, 2));
+    return;
+  }
+  const table = CENTRAL_COLLECTIONS[collection];
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`Central ${collection} delete failed (${response.status}).`);
 }
 
 function mergeJournalSync(remoteRecords, incomingTrades, incomingDeletions) {
@@ -250,9 +349,13 @@ app.get('/api/config', (_req, res) => {
     remoteEnabled: REMOTE_ENABLED,
     accessRequired: true,
     chartEnabled: Boolean(BIRDEYE_API_KEY),
-    aiEnabled: Boolean(AI_CHAT_API_KEY || AI_REPORT_API_KEY),
-    aiChatConfigured: Boolean(AI_CHAT_API_KEY),
-    aiReportConfigured: Boolean(AI_REPORT_API_KEY),
+    aiEnabled: Boolean(AI_CHAT_API_KEY || AI_REPORT_API_KEY || GEMINI_API_KEY),
+    aiChatConfigured: Boolean(AI_CHAT_API_KEY || GEMINI_API_KEY),
+    aiReportConfigured: Boolean(AI_REPORT_API_KEY || GEMINI_API_KEY),
+    aiChatModel: GEMINI_API_KEY ? GEMINI_CHAT_MODEL : AI_CHAT_MODEL,
+    aiReportModel: GEMINI_API_KEY ? GEMINI_REPORT_MODEL : AI_REPORT_MODEL,
+    aiChatProvider: GEMINI_API_KEY ? 'gemini' : 'openai-compatible',
+    centralDatabaseEnabled: REMOTE_ENABLED,
     pushEnabled: Boolean(webPush),
     pushPublicKey: webPush ? WEB_PUSH_PUBLIC_KEY : '',
   });
@@ -261,6 +364,69 @@ app.get('/api/config', (_req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString(), remoteEnabled: REMOTE_ENABLED });
 });
+
+app.get('/api/central/:collection', requireJournalAccess, async (req, res) => {
+  try {
+    const records = await readCentralCollection(req.params.collection);
+    res.json({ collection: req.params.collection, records });
+  } catch (error) {
+    res.status(error.message === 'Unknown central collection.' ? 404 : 503).json({ message: error.message });
+  }
+});
+
+app.post('/api/central/:collection', requireJournalAccess, async (req, res) => {
+  const record = req.body?.record;
+  if (!record || typeof record !== 'object') return res.status(400).json({ message: 'فیلد record لازم است.' });
+  if (JSON.stringify(record).length > 100_000) return res.status(413).json({ message: 'این داده بیش از حد طولانی است.' });
+  try {
+    const saved = await saveCentralRecord(req.params.collection, record);
+    res.status(201).json({ collection: req.params.collection, record: saved });
+  } catch (error) {
+    res.status(error.message === 'Unknown central collection.' ? 404 : 503).json({ message: error.message });
+  }
+});
+
+app.delete('/api/central/:collection/:id', requireJournalAccess, async (req, res) => {
+  try {
+    await deleteCentralRecord(req.params.collection, req.params.id);
+    res.json({ ok: true, collection: req.params.collection, id: req.params.id });
+  } catch (error) {
+    res.status(error.message === 'Unknown central collection.' ? 404 : 503).json({ message: error.message });
+  }
+});
+
+async function callGemini({ key, model, messages, temperature = 0.6 }) {
+  const systemText = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n');
+  const contents = messages.filter((message) => message.role !== 'system').map((message) => ({
+    role: message.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: message.content }],
+  }));
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: systemText ? { parts: [{ text: systemText }] } : undefined,
+      contents,
+      generationConfig: { temperature },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error?.message || 'Gemini request failed.');
+    error.status = response.status;
+    throw error;
+  }
+  return payload.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim() || '';
+}
+
+function aiHttpError(error, fallbackMessage) {
+  if (error && error.status === 429) {
+    return { status: 429, message: 'سهمیهٔ رایگان هوش مصنوعی تمام شده است؛ کمی بعد دوباره تلاش کن.' };
+  }
+  return { status: 502, message: fallbackMessage || 'ارتباط با سرویس هوش مصنوعی ناموفق بود.' };
+}
 
 app.post('/api/trade-lookup', requireJournalAccess, async (req, res) => {
   const address = String(req.body?.address || '').trim();
@@ -371,7 +537,7 @@ app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
   const message = String(req.body?.message || '').trim();
   if (!message) return res.status(400).json({ message: 'پیام خالی است.' });
   if (message.length > 3000) return res.status(400).json({ message: 'پیام بیش از حد طولانی است؛ کوتاه‌ترش کن.' });
-  if (!AI_CHAT_API_KEY) return res.status(503).json({ message: 'کلید چت تنظیم نشده است. AI_CHAT_API_KEY را در تنظیمات محیطی Render اضافه کن.' });
+  if (!AI_CHAT_API_KEY && !GEMINI_API_KEY) return res.status(503).json({ message: 'کلید چت تنظیم نشده است. GEMINI_API_KEY یا AI_CHAT_API_KEY را در تنظیمات محیطی Render اضافه کن.' });
   const chatHistory = Array.isArray(req.body?.history)
     ? req.body.history.slice(-12).filter((item) => item && ['user', 'assistant'].includes(item.role)
       && typeof item.content === 'string' && item.content.trim())
@@ -447,29 +613,43 @@ app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
   ].join(' ');
 
   try {
-    const response = await fetch(AI_CHAT_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${AI_CHAT_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: AI_CHAT_MODEL,
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'system', content: `داده‌های ژورنال فعلی کاربر به‌صورت JSON: ${tradeContext}` },
+      ...chatHistory,
+    ];
+    let reply = '';
+    if (GEMINI_API_KEY) {
+      reply = await callGemini({
+        key: GEMINI_API_KEY,
+        model: GEMINI_CHAT_MODEL,
+        messages,
         temperature: 0.6,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'system', content: `داده‌های ژورنال فعلی کاربر به‌صورت JSON: ${tradeContext}` },
-          ...chatHistory,
-        ],
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const apiMessage = payload.error?.message || payload.message;
-      return res.status(502).json({ message: apiMessage || 'ارتباط با سرویس هوش مصنوعی ناموفق بود.' });
+      });
+    } else {
+      const response = await fetch(AI_CHAT_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${AI_CHAT_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: AI_CHAT_MODEL,
+          temperature: 0.6,
+          messages,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 429) {
+          return res.status(429).json({ message: 'سهمیهٔ رایگان هوش مصنوعی تمام شده است؛ کمی بعد دوباره تلاش کن.' });
+        }
+        const apiMessage = payload.error?.message || payload.message;
+        return res.status(502).json({ message: apiMessage || 'ارتباط با سرویس هوش مصنوعی ناموفق بود.' });
+      }
+      reply = payload.choices?.[0]?.message?.content || '';
     }
-    const reply = payload.choices?.[0]?.message?.content;
     if (!reply) return res.status(502).json({ message: 'سرویس هوش مصنوعی پاسخ متنی برنگرداند.' });
     return res.json({
       reply,
@@ -478,7 +658,8 @@ app.post('/api/ai/chat', requireJournalAccess, async (req, res) => {
       omittedTradeCount,
     });
   } catch (error) {
-    return res.status(503).json({ message: 'سرویس هوش مصنوعی در دسترس نیست یا پاسخ‌دادن طول کشید.' });
+    const mapped = aiHttpError(error, 'سرویس هوش مصنوعی در دسترس نیست یا پاسخ‌دادن طول کشید.');
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 });
 
@@ -649,17 +830,27 @@ app.post('/api/coach/rules/suggest', requireJournalAccess, async (_req, res) => 
 app.post('/api/ai/test/:section', requireJournalAccess, async (req, res) => {
   const section = String(req.params.section || '');
   const config = section === 'chat'
-    ? { key: AI_CHAT_API_KEY, url: AI_CHAT_API_URL, model: AI_CHAT_MODEL, name: 'چت' }
+    ? { key: GEMINI_API_KEY || AI_CHAT_API_KEY, provider: GEMINI_API_KEY ? 'gemini' : 'openai', url: AI_CHAT_API_URL, model: GEMINI_API_KEY ? GEMINI_CHAT_MODEL : AI_CHAT_MODEL, name: 'چت' }
     : section === 'report'
-      ? { key: AI_REPORT_API_KEY, url: AI_REPORT_API_URL, model: AI_REPORT_MODEL, name: 'گزارش' }
+      ? { key: GEMINI_API_KEY || AI_REPORT_API_KEY, provider: GEMINI_API_KEY ? 'gemini' : 'openai', url: AI_REPORT_API_URL, model: GEMINI_API_KEY ? GEMINI_REPORT_MODEL : AI_REPORT_MODEL, name: 'گزارش' }
       : null;
   if (!config) return res.status(404).json({ message: 'بخش موردنظر برای تست شناخته نشد.' });
   if (!config.key) {
-    const variable = section === 'chat' ? 'AI_CHAT_API_KEY' : 'AI_REPORT_API_KEY';
+    const variable = section === 'chat' ? 'GEMINI_API_KEY یا AI_CHAT_API_KEY' : 'GEMINI_API_KEY یا AI_REPORT_API_KEY';
     return res.status(503).json({ message: `کلید ${config.name} تنظیم نشده است؛ متغیر ${variable} را در Render اضافه کن.` });
   }
 
   try {
+    if (config.provider === 'gemini') {
+      const reply = await callGemini({
+        key: config.key,
+        model: config.model,
+        messages: [{ role: 'user', content: 'پاسخ بده: اتصال موفق است.' }],
+        temperature: 0,
+      });
+      if (!reply) return res.status(502).json({ message: `سرویس ${config.name} پاسخ متنی معتبر نداد.` });
+      return res.json({ ok: true, message: `اتصال API ${config.name} موفق است.` });
+    }
     const response = await fetch(config.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.key}` },
@@ -673,14 +864,18 @@ app.post('/api/ai/test/:section', requireJournalAccess, async (req, res) => {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const providerMessage = payload.error?.message || payload.message;
+      if (response.status === 429) {
+        return res.status(429).json({ message: 'سهمیهٔ رایگان هوش مصنوعی تمام شده است؛ کمی بعد دوباره تلاش کن.' });
+      }
       return res.status(502).json({ message: providerMessage || `تست اتصال ${config.name} ناموفق بود (${response.status}).` });
     }
     if (!payload.choices?.[0]?.message?.content) {
       return res.status(502).json({ message: `سرویس ${config.name} پاسخ متنی معتبر نداد.` });
     }
     return res.json({ ok: true, message: `اتصال API ${config.name} موفق است.` });
-  } catch (_error) {
-    return res.status(503).json({ message: `سرویس API ${config.name} در دسترس نیست یا زمان تست تمام شد.` });
+  } catch (error) {
+    const mapped = aiHttpError(error, `سرویس API ${config.name} در دسترس نیست یا زمان تست تمام شد.`);
+    return res.status(mapped.status).json({ message: mapped.message });
   }
 });
 

@@ -37,6 +37,13 @@ Then open:
 9. Redeploy the Render service after saving environment variables.
 10. Publish the desktop app update built from `extracted-app/xay.html`; the desktop client syncs every 20 seconds and after local saves.
 
+## Central coach database and AI models
+
+1. Run the latest [supabase.sql](supabase.sql) in the Supabase SQL Editor. It adds the central tables for check-ins, rules, assignments, contracts, lesson library, memories, monthly summaries and chat history.
+2. Set `GEMINI_API_KEY` on the server for Gemini. `GEMINI_CHAT_MODEL` defaults to `gemini-2.5-flash-lite`; `GEMINI_REPORT_MODEL` defaults to `gemini-2.5-flash`.
+3. OpenAI-compatible variables remain supported as fallback. Keep every API key only in the server environment, never in the browser or desktop source.
+4. Central coach records use `/api/central/:collection` and require the same private `JOURNAL_ACCESS_KEY`.
+
 Generate a private journal key locally with:
 
 ```bash

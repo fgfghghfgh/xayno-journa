@@ -355,6 +355,20 @@
       .personal-rule-item strong { display: block; color: var(--text); font-size: 12px; line-height: 1.8; }
       .personal-rule-item p { margin-top: 5px; font-size: 11px; }
       .personal-rule-item.suggestion { border-color: rgba(255,187,77,.18); }
+      .lesson-library-card { grid-column: 1 / -1; }
+      .lesson-library-form { display: grid; gap: 10px; margin-top: 12px; }
+      .lesson-library-form label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
+      .lesson-library-form input, .lesson-library-form textarea { width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(0,0,0,.2); color: var(--text); padding: 9px 10px; font: inherit; line-height: 1.8; resize: vertical; }
+      .lesson-library-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .lesson-library-actions button, .lesson-library-item button { min-height: 36px; border: 1px solid rgba(0,245,160,.2); border-radius: 9px; background: rgba(0,245,160,.08); color: var(--green); padding: 0 12px; font-weight: 750; cursor: pointer; }
+      .lesson-library-status { color: var(--text-dim); font-size: 11px; line-height: 1.8; }
+      .lesson-library-list { display: grid; gap: 8px; margin-top: 10px; }
+      .lesson-library-item { padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 10px; background: rgba(3,8,12,.28); }
+      .lesson-library-item strong { color: var(--text); font-size: 12px; }
+      .lesson-library-item p { margin: 7px 0; color: var(--text-muted); font-size: 12px; line-height: 1.9; white-space: pre-wrap; }
+      .lesson-library-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+      .lesson-library-tag { padding: 3px 8px; border: 1px solid rgba(0,212,245,.18); border-radius: 999px; background: rgba(0,212,245,.06); color: var(--cyan); font-size: 10px; }
+      .lesson-library-item-actions { display: flex; flex-wrap: wrap; gap: 7px; }
       .monthly-comparison-controls { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
       .monthly-comparison-controls label { display: grid; gap: 6px; color: var(--text-muted); font-size: 11px; }
       .monthly-comparison-controls input { min-height: 38px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #10191e; color: var(--text); padding: 0 9px; color-scheme: dark; }
@@ -1196,6 +1210,27 @@
               <div id="personalRulesSuggestions" class="personal-rules-suggestions" aria-live="polite"></div>
               <h3>قوانین تأییدشده</h3>
               <div id="personalRulesList" class="personal-rules-list"></div>
+            </article>
+            <article class="master-card lesson-library-card">
+              <h2>کتابخانهٔ درس‌ها</h2>
+              <p>نکته‌ها و برداشت‌های خودت را از کتاب‌های روانشناسی ثبت کن. این بخش فقط محتوایی را نشان می‌دهد که خودت وارد کرده‌ای و هرگز محتوای کتاب را ساخته یا نسبت داده نمی‌شود.</p>
+              <form id="lessonLibraryForm" class="lesson-library-form">
+                <label>نام کتاب
+                  <input id="lessonBook" type="text" maxlength="200" placeholder="مثلاً نام کتاب یا منبعی که خوانده‌ای" required>
+                </label>
+                <label>متن نکته با کلمات خودت
+                  <textarea id="lessonText" maxlength="2000" rows="4" placeholder="برداشت شخصی خودت را بنویس..." required></textarea>
+                </label>
+                <label>برچسب‌ها
+                  <input id="lessonTags" type="text" maxlength="300" placeholder="ترس، طمع، صبر، FOMO">
+                </label>
+                <div class="lesson-library-actions">
+                  <button id="lessonLibrarySaveBtn" type="submit">افزودن به کتابخانه</button>
+                  <button id="lessonLibraryCancelBtn" type="button" hidden>لغو ویرایش</button>
+                </div>
+              </form>
+              <p id="lessonLibraryStatus" class="lesson-library-status" role="status" aria-live="polite"></p>
+              <div id="lessonLibraryList" class="lesson-library-list"></div>
             </article>
             <article class="master-card coach-session-card">
               <h2>جلسه با استاد</h2>

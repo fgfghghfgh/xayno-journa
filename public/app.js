@@ -3,6 +3,7 @@ const CHECKIN_STORAGE_KEY = 'xayno-daily-checkins-v1';
 const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
 const TRADING_PROFILE_STORAGE_KEY = 'xayno-trading-profile-v1';
 const PERSONAL_RULES_STORAGE_KEY = 'xayno-personal-trading-rules-v1';
+const LESSON_LIBRARY_STORAGE_KEY = 'xayno-lesson-library-v1';
 const TRADING_PROFILE_CATEGORIES = [
   ['triggers', 'محرک‌های احساسی'],
   ['moneyBeliefs', 'باورهای احتمالی دربارهٔ پول'],
@@ -73,6 +74,14 @@ const personalRulesButton = document.getElementById('personalRulesSuggestBtn');
 const personalRulesStatus = document.getElementById('personalRulesStatus');
 const personalRulesSuggestions = document.getElementById('personalRulesSuggestions');
 const personalRulesList = document.getElementById('personalRulesList');
+const lessonLibraryForm = document.getElementById('lessonLibraryForm');
+const lessonBook = document.getElementById('lessonBook');
+const lessonText = document.getElementById('lessonText');
+const lessonTags = document.getElementById('lessonTags');
+const lessonLibrarySaveButton = document.getElementById('lessonLibrarySaveBtn');
+const lessonLibraryCancelButton = document.getElementById('lessonLibraryCancelBtn');
+const lessonLibraryStatus = document.getElementById('lessonLibraryStatus');
+const lessonLibraryList = document.getElementById('lessonLibraryList');
 const preTradeCheck = document.getElementById('preTradeCheck');
 const preTradeWhy = document.getElementById('preTradeWhy');
 const preTradeStop = document.getElementById('preTradeStop');
@@ -112,6 +121,8 @@ let tradingProfileBusy = false;
 let personalRuleSuggestions = [];
 let personalRulesBusy = false;
 let personalRules = [];
+let lessonLibrary = [];
+let lessonLibraryEditingId = '';
 let journalChartInstance = null;
 let journalChartOverlayIds = [];
 let journalChartOverlayState = new Map();
@@ -2436,6 +2447,134 @@ function loadPersonalRules() {
   renderPersonalRules();
 }
 
+function saveLessonLibrary(nextLessons) {
+  try {
+    localStorage.setItem(LESSON_LIBRARY_STORAGE_KEY, JSON.stringify(nextLessons));
+    lessonLibrary = nextLessons;
+    renderLessonLibrary();
+    return true;
+  } catch (error) {
+    lessonLibraryStatus.textContent = 'ذخیرهٔ کتابخانه ناموفق بود؛ فضای ذخیره‌سازی مرورگر را بررسی کن.';
+    return false;
+  }
+}
+
+function renderLessonLibrary() {
+  lessonLibraryList.replaceChildren();
+  if (!lessonLibrary.length) {
+    const empty = document.createElement('p');
+    empty.className = 'overview-empty';
+    empty.textContent = 'هنوز نکته‌ای به کتابخانه اضافه نکرده‌ای.';
+    lessonLibraryList.appendChild(empty);
+    return;
+  }
+  lessonLibrary
+    .slice()
+    .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')))
+    .forEach((lesson) => {
+      const row = document.createElement('article');
+      row.className = 'lesson-library-item';
+      const title = document.createElement('strong');
+      title.textContent = lesson.book;
+      const text = document.createElement('p');
+      text.textContent = lesson.text;
+      const tags = document.createElement('div');
+      tags.className = 'lesson-library-tags';
+      (lesson.tags || []).forEach((tag) => {
+        const badge = document.createElement('span');
+        badge.className = 'lesson-library-tag';
+        badge.textContent = tag;
+        tags.appendChild(badge);
+      });
+      const actions = document.createElement('div');
+      actions.className = 'lesson-library-item-actions';
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.textContent = 'ویرایش';
+      edit.addEventListener('click', () => {
+        lessonLibraryEditingId = lesson.id;
+        lessonBook.value = lesson.book;
+        lessonText.value = lesson.text;
+        lessonTags.value = (lesson.tags || []).join('، ');
+        lessonLibrarySaveButton.textContent = 'ذخیرهٔ تغییرات';
+        lessonLibraryCancelButton.hidden = false;
+        lessonLibraryStatus.textContent = 'در حال ویرایش این نکته هستی.';
+        lessonBook.focus();
+      });
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = 'حذف';
+      remove.addEventListener('click', () => {
+        if (!window.confirm('این نکته از کتابخانه حذف شود؟')) return;
+        if (saveLessonLibrary(lessonLibrary.filter((item) => item.id !== lesson.id))) {
+          lessonLibraryStatus.textContent = 'نکته از کتابخانه حذف شد.';
+        }
+      });
+      actions.append(edit, remove);
+      row.append(title, text, tags, actions);
+      lessonLibraryList.appendChild(row);
+    });
+}
+
+function loadLessonLibrary() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LESSON_LIBRARY_STORAGE_KEY) || '[]');
+    if (!Array.isArray(saved) || saved.some((item) => !item || typeof item.id !== 'string'
+      || typeof item.book !== 'string' || typeof item.text !== 'string')) {
+      throw new Error('ساختار کتابخانه معتبر نیست.');
+    }
+    lessonLibrary = saved.map((item) => ({
+      ...item,
+      tags: Array.isArray(item.tags) ? item.tags.filter((tag) => typeof tag === 'string').slice(0, 20) : [],
+    }));
+  } catch (error) {
+    lessonLibrary = [];
+    lessonLibraryStatus.textContent = 'خواندن کتابخانه ناموفق بود؛ داده‌های قدیمی تغییر نکردند.';
+  }
+  renderLessonLibrary();
+}
+
+lessonLibraryForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const book = lessonBook.value.trim();
+  const text = lessonText.value.trim();
+  if (!book || !text) {
+    lessonLibraryStatus.textContent = 'نام کتاب و متن نکته را وارد کن.';
+    return;
+  }
+  const tags = [...new Set(lessonTags.value.split(/[,،]/).map((tag) => tag.trim()).filter(Boolean))].slice(0, 20);
+  let next;
+  if (lessonLibraryEditingId) {
+    next = lessonLibrary.map((lesson) => lesson.id === lessonLibraryEditingId
+      ? { ...lesson, book, text, tags, updatedAt: new Date().toISOString() }
+      : lesson);
+  } else {
+    next = [{
+      id: `lesson_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      book,
+      text,
+      tags,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }, ...lessonLibrary];
+  }
+  if (saveLessonLibrary(next)) {
+    lessonLibraryStatus.textContent = lessonLibraryEditingId ? 'تغییرات نکته ذخیره شد.' : 'نکته به کتابخانه اضافه شد.';
+    lessonLibraryEditingId = '';
+    lessonLibraryForm.reset();
+    lessonLibrarySaveButton.textContent = 'افزودن به کتابخانه';
+    lessonLibraryCancelButton.hidden = true;
+  }
+});
+
+lessonLibraryCancelButton?.addEventListener('click', () => {
+  lessonLibraryEditingId = '';
+  lessonLibraryForm.reset();
+  lessonLibrarySaveButton.textContent = 'افزودن به کتابخانه';
+  lessonLibraryCancelButton.hidden = true;
+  lessonLibraryStatus.textContent = 'ویرایش لغو شد.';
+});
+
 personalRulesButton?.addEventListener('click', async () => {
   if (personalRulesBusy) return;
   personalRulesBusy = true;
@@ -2882,6 +3021,7 @@ async function hydrateApp() {
   }
   loadTradingProfile();
   loadPersonalRules();
+  loadLessonLibrary();
   const pendingLocalTrades = readLocalTrades();
   const serverTrades = await fetchServerTrades();
   if (Array.isArray(serverTrades) && (serverTrades.length || state.remoteEnabled)) {
