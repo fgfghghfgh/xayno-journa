@@ -2,13 +2,12 @@
 <html lang="fa" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0b1013" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <title>XAYNO Journal</title>
+    <title>XAYNO Journal · Telegram Mini App</title>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap');
 
@@ -31,6 +30,32 @@
         --yellow: #fbbf24;
         --shadow: rgba(0, 0, 0, 0.32);
       }
+
+      body.telegram-required-mode {
+        min-height: 100vh;
+        min-height: 100dvh;
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Vazirmatn, sans-serif;
+      }
+
+      .telegram-required {
+        display: none;
+        min-height: 100vh;
+        min-height: 100dvh;
+        box-sizing: border-box;
+        align-items: center;
+        justify-content: center;
+        padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+        text-align: center;
+      }
+
+      body.telegram-required-mode .telegram-required { display: flex; }
+      body.telegram-required-mode .xh-root { display: none; }
+      .telegram-required-card { width: min(100%, 420px); padding: 28px; border: 1px solid var(--line); border-radius: 24px; background: var(--panel); }
+      .telegram-required-card h1 { margin: 0 0 12px; }
+      .telegram-required-card p { color: var(--text-muted); line-height: 1.9; }
 
       * { box-sizing: border-box; }
 
@@ -1059,11 +1084,10 @@
             <button type="button" class="xh-nav-btn active" data-journal-view="journal">ژورنال</button>
             <button type="button" class="xh-nav-btn" data-journal-view="overview">نمای کلی</button>
             <button type="button" class="xh-nav-btn" data-journal-view="master">استاد</button>
-            <button type="button" class="xh-nav-btn" data-journal-view="settings">تنظیمات API</button>
+            <button type="button" class="xh-nav-btn" data-journal-view="settings">تنظیمات</button>
           </nav>
 
           <button id="newTradeBtn" type="button" class="action-btn">+ ثبت معامله</button>
-          <button type="button" id="pushEnableBtn" class="push-enable-btn" hidden>فعال‌سازی اعلان</button>
     <div id="pushToast" class="push-toast" role="status" aria-live="polite" hidden>
       <span class="push-toast-mark" aria-hidden="true">X</span>
       <span class="push-toast-copy"><strong>ژورنال جدید ثبت شد</strong><span data-push-toast-body></span></span>
@@ -1073,7 +1097,6 @@
             <span class="xh-live-dot"></span>
             <span id="syncLabel">بررسی همگام‌سازی</span>
             <span id="syncState" class="xh-live-count">...</span>
-            <button type="button" id="syncKeyBtn" class="sync-key-btn">تنظیم کلید</button>
           </div>
         </header>
 
@@ -1085,15 +1108,14 @@
           <section id="apiSettingsView" class="api-settings" hidden>
             <article class="api-setting-card api-settings-heading">
               <h2>تنظیمات اتصال هوش مصنوعی</h2>
-              <p>برای حفظ امنیت، کلید را در این صفحه وارد نکن. در Render → سرویس ژورنال → Environment مقدارها را اضافه و ذخیره کن؛ با راه‌اندازی دوبارهٔ سرویس، وضعیت این صفحه به‌روز می‌شود. کلیدها هرگز به مرورگر فرستاده نمی‌شوند.</p>
+              <p>ورود و دسترسی به داده‌ها با تأیید امضای تلگرام انجام می‌شود. کلید ربات و کلید هوش مصنوعی فقط در Cloudflare نگهداری می‌شوند و به مرورگر نمی‌رسند.</p>
             </article>
             <article class="api-setting-card">
               <h2>هوش مصنوعی چت</h2>
               <p>این API فقط برای پاسخ‌های چت استاد استفاده می‌شود.</p>
               <div class="api-setting-vars">
-                <div class="api-setting-var"><code>AI_CHAT_API_KEY</code><span>کلید</span></div>
-                <div class="api-setting-var"><code>AI_CHAT_API_URL</code><span>نشانی API (اختیاری)</span></div>
-                <div class="api-setting-var"><code>AI_CHAT_MODEL</code><span>مدل (اختیاری)</span></div>
+                <div class="api-setting-var"><code>GEMINI_API_KEY</code><span>فقط سمت سرور</span></div>
+                <div class="api-setting-var"><code>GEMINI_CHAT_MODEL</code><span>مدل (اختیاری)</span></div>
               </div>
               <div id="chatApiState" class="api-setting-state" role="status">وضعیت بررسی نشده</div>
               <button type="button" class="api-setting-test" data-test-api="chat">تست اتصال چت</button>
@@ -1102,16 +1124,15 @@
               <h2>هوش مصنوعی گزارش</h2>
               <p>این API مستقل برای تحلیل گزارش و تصاویر چارت استفاده می‌شود.</p>
               <div class="api-setting-vars">
-                <div class="api-setting-var"><code>AI_REPORT_API_KEY</code><span>کلید</span></div>
-                <div class="api-setting-var"><code>AI_REPORT_API_URL</code><span>نشانی API (اختیاری)</span></div>
-                <div class="api-setting-var"><code>AI_REPORT_MODEL</code><span>مدل (اختیاری)</span></div>
+                <div class="api-setting-var"><code>GEMINI_API_KEY</code><span>فقط سمت سرور</span></div>
+                <div class="api-setting-var"><code>GEMINI_REPORT_MODEL</code><span>مدل (اختیاری)</span></div>
               </div>
               <div id="reportApiState" class="api-setting-state" role="status">وضعیت بررسی نشده</div>
               <button type="button" class="api-setting-test" data-test-api="report">تست اتصال گزارش</button>
             </article>
             <article class="api-setting-card api-settings-note">
-              <h2>نکته دربارهٔ کلیدهای دیگر سایت</h2>
-              <p>کلیدهای Helius و Birdeye همچنان فقط در Environment سرور تنظیم می‌شوند. DexScreener برای قابلیت فعلی کلید نمی‌خواهد. کلید قدیمی <code>AI_API_KEY</code> تا زمان تنظیم کلیدهای جداگانه، به‌عنوان جایگزین سازگار باقی می‌ماند.</p>
+              <h2>ورود به مینی‌اپ</h2>
+              <p>ربات باید دکمهٔ Web App را با نشانی HTTPS همین پروژه نمایش دهد. سرور امضای تلگرام را بررسی می‌کند و اطلاعات هر شناسهٔ تلگرام را جدا نگه می‌دارد.</p>
             </article>
           </section>
           <section id="postTradeRuleReview" class="posttrade-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="postTradeRuleTitle">
@@ -1501,7 +1522,15 @@
       </div>
     </div>
 
+    <section id="telegramRequired" class="telegram-required" role="status" aria-live="polite">
+      <div class="telegram-required-card">
+        <h1>XAYNO Journal</h1>
+        <p id="telegramRequiredMessage">این ژورنال فقط به‌صورت مینی‌اپ داخل تلگرام باز می‌شود. از دکمهٔ ربات وارد شو.</p>
+      </div>
+    </section>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/umd/klinecharts.min.js"></script>
-    <script src="/app.js?v=20261122-step10"></script>
+    <script src="/app.js?v=telegram-mini-app"></script>
   </body>
 </html>

@@ -2,7 +2,6 @@ const STORAGE_KEY = 'xayno-local-journal';
 const TRADE_BASELINE_STORAGE_KEY = 'xayno-local-trade-baseline-v1';
 const DEFERRED_TRADES_STORAGE_KEY = 'xayno-deferred-local-trades-v1';
 const CHECKIN_STORAGE_KEY = 'xayno-daily-checkins-v1';
-const ACCESS_KEY_STORAGE = 'xayno-journal-access-key';
 const TRADING_PROFILE_STORAGE_KEY = 'xayno-trading-profile-v1';
 const PERSONAL_RULES_STORAGE_KEY = 'xayno-personal-trading-rules-v1';
 const LESSON_LIBRARY_STORAGE_KEY = 'xayno-lesson-library-v1';
@@ -14,6 +13,22 @@ const TRADING_PROFILE_CATEGORIES = [
   ['growthAreas', 'زمینه‌های قابل‌تقویت'],
   ['biases', 'سوگیری‌ها با نمونه از معامله‌های تو'],
 ];
+const telegramWebApp = window.Telegram?.WebApp || null;
+const telegramInitData = String(telegramWebApp?.initData || '');
+let telegramUserId = '';
+const appStorage = {
+  getItem(key) {
+    return telegramUserId ? localStorage.getItem(`xayno-tg-${telegramUserId}:${key}`) : null;
+  },
+  setItem(key, value) {
+    if (!telegramUserId) throw new Error('ورود تلگرام تأیید نشده است.');
+    localStorage.setItem(`xayno-tg-${telegramUserId}:${key}`, value);
+  },
+  removeItem(key) {
+    if (!telegramUserId) throw new Error('ورود تلگرام تأیید نشده است.');
+    localStorage.removeItem(`xayno-tg-${telegramUserId}:${key}`);
+  },
+};
 function localDateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -38,7 +53,6 @@ const saveStatus = document.getElementById('saveStatus');
 const imagePreviews = document.getElementById('imagePreviews');
 const syncLabel = document.getElementById('syncLabel');
 const syncState = document.getElementById('syncState');
-const pushEnableButton = document.getElementById('pushEnableBtn');
 const pushToast = document.getElementById('pushToast');
 const overviewView = document.getElementById('overviewView');
 const apiSettingsView = document.getElementById('apiSettingsView');
@@ -109,7 +123,6 @@ const checkinLocalNote = document.getElementById('checkinLocalNote');
 const chatApiState = document.getElementById('chatApiState');
 const reportApiState = document.getElementById('reportApiState');
 const journalViewButtons = [...document.querySelectorAll('[data-journal-view]')];
-let accessKey = localStorage.getItem(ACCESS_KEY_STORAGE) || '';
 let syncInProgress = false;
 let cloudTradesVerified = false;
 let tradeBaselineReady = false;
@@ -904,26 +917,11 @@ function updateSyncStatus(online) {
   syncState.style.color = (!state.remoteEnabled || online) ? 'var(--green)' : 'var(--yellow)';
 }
 
-function promptForAccessKey() {
-  const entered = window.prompt('برای مشاهده و همگام‌سازی ژورنال، کلید خصوصی ژورنال را وارد کن:');
-  if (!entered) throw new Error('برای دسترسی به ژورنال، کلید خصوصی لازم است.');
-  accessKey = entered.trim();
-  localStorage.setItem(ACCESS_KEY_STORAGE, accessKey);
-}
-
 async function apiFetch(url, options = {}) {
-  if (state.remoteEnabled && !accessKey) promptForAccessKey();
+  if (!telegramInitData) throw new Error('برای ادامه، ژورنال را از داخل مینی‌اپ تلگرام باز کن.');
   const headers = new Headers(options.headers || {});
-  if (state.remoteEnabled) headers.set('Authorization', `Bearer ${accessKey}`);
-  const response = await fetch(url, { ...options, headers });
-  if (response.status === 401 && state.remoteEnabled) {
-    localStorage.removeItem(ACCESS_KEY_STORAGE);
-    accessKey = '';
-    promptForAccessKey();
-    headers.set('Authorization', `Bearer ${accessKey}`);
-    return fetch(url, { ...options, headers });
-  }
-  return response;
+  headers.set('Authorization', `tma ${telegramInitData}`);
+  return fetch(url, { ...options, headers, credentials: 'omit', cache: 'no-store' });
 }
 
 function showJournalToast(trade) {
@@ -936,88 +934,6 @@ function showJournalToast(trade) {
     pushToast.classList.remove('visible');
     window.setTimeout(() => { pushToast.hidden = true; }, 250);
   }, 4200);
-}
-
-function decodePushKey(value) {
-  const padded = value + '='.repeat((4 - value.length % 4) % 4);
-  return Uint8Array.from(atob(padded.replace(/-/g, '+').replace(/_/g, '/')), (character) => character.charCodeAt(0));
-}
-
-async function setupJournalPush(config) {
-  if (!pushEnableButton || !config.pushEnabled || !config.pushPublicKey) return;
-  pushEnableButton.hidden = false;
-  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-    pushEnableButton.textContent = 'اعلان روی این مرورگر پشتیبانی نمی‌شود';
-    pushEnableButton.disabled = true;
-    return;
-  }
-  try {
-    const registration = await navigator.serviceWorker.register('/service-worker.js');
-    const subscription = await registration.pushManager.getSubscription();
-    if (subscription) {
-      await apiFetch('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription) });
-      pushEnableButton.textContent = 'اعلان ژورنال فعال است';
-      pushEnableButton.disabled = true;
-    }
-  } catch (error) {
-    pushEnableButton.textContent = 'فعال‌سازی اعلان';
-  }
-}
-
-async function enableJournalPush() {
-  if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !navigator.standalone) {
-    window.alert('برای اعلان در آیفون، ابتدا از منوی اشتراک‌گذاری Safari گزینهٔ «Add to Home Screen» را بزن و ژورنال را از صفحهٔ اصلی باز کن.');
-    return;
-  }
-  try {
-    pushEnableButton.disabled = true;
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') throw new Error('اجازهٔ اعلان داده نشد.');
-    const [configResponse, registration] = await Promise.all([
-      fetch('/api/config').then((response) => response.json()),
-      navigator.serviceWorker.register('/service-worker.js'),
-    ]);
-    if (!configResponse.pushEnabled || !configResponse.pushPublicKey) throw new Error('اعلان وب هنوز در سرور تنظیم نشده است.');
-    const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodePushKey(configResponse.pushPublicKey) });
-    const response = await apiFetch('/api/push/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.message || 'ثبت اشتراک اعلان ناموفق بود.');
-    pushEnableButton.textContent = 'اعلان ژورنال فعال است';
-    showJournalToast({ token: 'اعلان‌ها فعال شدند' });
-  } catch (error) {
-    pushEnableButton.disabled = false;
-    pushEnableButton.textContent = 'فعال‌سازی دوبارهٔ اعلان';
-    window.alert(error.message || 'فعال‌سازی اعلان انجام نشد.');
-  }
-}
-
-async function changeJournalAccessKey() {
-  if (!state.remoteEnabled) {
-    window.alert('اتصال ابری Cloudflare در دسترس نیست.');
-    return;
-  }
-  localStorage.removeItem(ACCESS_KEY_STORAGE);
-  accessKey = '';
-  try {
-    promptForAccessKey();
-    updateSyncStatus(false);
-    const response = await apiFetch('/api/trades');
-    if (response.status === 401) throw new Error('کلید دسترسی رد شد؛ آن را بررسی و دوباره وارد کن.');
-    if (response.status === 503) {
-      const details = await response.json().catch(() => ({}));
-      throw new Error(details.message || 'اتصال پایگاه ابری D1 برقرار نشد.');
-    }
-    if (!response.ok) throw new Error(`خطای سرور (${response.status}).`);
-    const payload = await response.json();
-    if (!Array.isArray(payload.trades)) throw new Error('دریافت معاملات کامل نشد.');
-    state.trades = payload.trades;
-    saveLocalTrades(state.trades);
-    renderAll();
-    updateSyncStatus(true);
-  } catch (error) {
-    updateSyncStatus(false);
-    window.alert(error.message);
-  }
 }
 
 function renderImagePreviews() {
@@ -1083,7 +999,7 @@ function openTradeForm() {
 
 function readLocalTrades() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = appStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (error) {
     return [];
@@ -1091,11 +1007,11 @@ function readLocalTrades() {
 }
 
 function saveLocalTrades(trades) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(trades));
+  appStorage.setItem(STORAGE_KEY, JSON.stringify(trades));
 }
 
 function storedTradeIds(key) {
-  const raw = localStorage.getItem(key);
+  const raw = appStorage.getItem(key);
   if (key === TRADE_BASELINE_STORAGE_KEY && raw === null) {
     throw new Error('وضعیت اولیهٔ معاملات ثبت نشده؛ همگام‌سازی برای جلوگیری از انتقال ناخواسته متوقف شد.');
   }
@@ -1118,7 +1034,7 @@ function establishTradeSyncBaseline(localTrades, cloudTrades) {
     const id = String(trade.id || '');
     if (id && !cloudIds.has(id) && baselineIds.includes(id)) deferredIds.add(id);
   }
-  localStorage.setItem(DEFERRED_TRADES_STORAGE_KEY, JSON.stringify([...deferredIds]));
+  appStorage.setItem(DEFERRED_TRADES_STORAGE_KEY, JSON.stringify([...deferredIds]));
   tradeBaselineReady = true;
   cloudTradesVerified = true;
 }
@@ -1162,7 +1078,7 @@ function centralCollectionSpecs() {
 }
 
 function readCentralTombstones() {
-  const records = JSON.parse(localStorage.getItem(CENTRAL_TOMBSTONES_STORAGE_KEY) || '[]');
+  const records = JSON.parse(appStorage.getItem(CENTRAL_TOMBSTONES_STORAGE_KEY) || '[]');
   if (!Array.isArray(records) || records.some((record) => !record
     || typeof record.collection !== 'string' || typeof record.id !== 'string' || typeof record.updatedAt !== 'string')) {
     throw new Error('نشانگرهای حذف داده‌های ابری قابل خواندن نیستند؛ داده‌ها حفظ شدند.');
@@ -1255,14 +1171,14 @@ async function syncCentralRecordsOnce() {
     if (invalidCentralLocalStorage.has(spec.collection)) continue;
     if (spec.collection === 'memories') {
       const profile = records.find((record) => record.id === 'trading_profile');
-      if (profile) localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(Object.entries(profile).filter(([key]) => key !== 'id'))));
-      else localStorage.removeItem(storageKey);
+      if (profile) appStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(Object.entries(profile).filter(([key]) => key !== 'id'))));
+      else appStorage.removeItem(storageKey);
     } else {
-      localStorage.setItem(storageKey, JSON.stringify(records));
+      appStorage.setItem(storageKey, JSON.stringify(records));
     }
   }
 
-  localStorage.setItem(CENTRAL_TOMBSTONES_STORAGE_KEY, JSON.stringify(nextTombstones));
+  appStorage.setItem(CENTRAL_TOMBSTONES_STORAGE_KEY, JSON.stringify(nextTombstones));
 }
 
 function syncCentralRecords() {
@@ -1316,7 +1232,7 @@ function queueCentralCollectionSync(collection, previousRecords, nextRecords, st
     }
   }
   try {
-    localStorage.setItem(CENTRAL_TOMBSTONES_STORAGE_KEY, JSON.stringify(tombstones));
+    appStorage.setItem(CENTRAL_TOMBSTONES_STORAGE_KEY, JSON.stringify(tombstones));
   } catch (error) {
     if (statusElement) statusElement.textContent = 'داده روی این دستگاه ذخیره شد، اما ثبت نشانگر حذف در مرورگر ناموفق بود.';
     return;
@@ -2387,7 +2303,7 @@ document.querySelectorAll('[data-test-api]').forEach((button) => {
 });
 
 function loadDailyCheckins() {
-  const raw = localStorage.getItem(CHECKIN_STORAGE_KEY);
+  const raw = appStorage.getItem(CHECKIN_STORAGE_KEY);
   if (!raw) {
     invalidCentralLocalStorage.delete('checkins');
     return [];
@@ -2560,7 +2476,7 @@ let tradingProfileSaved = false;
 
 function loadTradingProfile() {
   try {
-    const saved = JSON.parse(localStorage.getItem(TRADING_PROFILE_STORAGE_KEY) || 'null');
+    const saved = JSON.parse(appStorage.getItem(TRADING_PROFILE_STORAGE_KEY) || 'null');
     if (saved && TRADING_PROFILE_CATEGORIES.every(([key]) => Array.isArray(saved[key]))) {
       tradingProfile = saved;
       tradingProfileSaved = true;
@@ -2614,7 +2530,7 @@ tradingProfileSaveButton?.addEventListener('click', () => {
   }
   try {
     tradingProfile.updatedAt = new Date().toISOString();
-    localStorage.setItem(TRADING_PROFILE_STORAGE_KEY, JSON.stringify(tradingProfile));
+    appStorage.setItem(TRADING_PROFILE_STORAGE_KEY, JSON.stringify(tradingProfile));
     invalidCentralLocalStorage.delete('memories');
     tradingProfileSaved = true;
     tradingProfileEditing = false;
@@ -2629,7 +2545,7 @@ tradingProfileSaveButton?.addEventListener('click', () => {
 tradingProfileDeleteButton?.addEventListener('click', () => {
   const previous = tradingProfile ? [{ ...tradingProfile, id: 'trading_profile' }] : [];
   try {
-    localStorage.removeItem(TRADING_PROFILE_STORAGE_KEY);
+    appStorage.removeItem(TRADING_PROFILE_STORAGE_KEY);
     invalidCentralLocalStorage.delete('memories');
     tradingProfile = null;
     tradingProfileSaved = false;
@@ -2655,7 +2571,7 @@ function savePersonalRules(nextRules) {
           : now,
       };
     });
-    localStorage.setItem(PERSONAL_RULES_STORAGE_KEY, JSON.stringify(prepared));
+    appStorage.setItem(PERSONAL_RULES_STORAGE_KEY, JSON.stringify(prepared));
     invalidCentralLocalStorage.delete('personal_rules');
     personalRules = prepared;
     renderPersonalRules();
@@ -2731,7 +2647,7 @@ function renderPersonalRules() {
 
 function loadPersonalRules() {
   try {
-    const saved = JSON.parse(localStorage.getItem(PERSONAL_RULES_STORAGE_KEY) || '[]');
+    const saved = JSON.parse(appStorage.getItem(PERSONAL_RULES_STORAGE_KEY) || '[]');
     if (!Array.isArray(saved) || saved.some((rule) => !rule || typeof rule.id !== 'string' || typeof rule.rule !== 'string')) {
       throw new Error('ساختار قوانین شخصی معتبر نیست.');
     }
@@ -2752,7 +2668,7 @@ function saveLessonLibrary(nextLessons) {
       ...lesson,
       updatedAt: lesson.updatedAt || now,
     }));
-    localStorage.setItem(LESSON_LIBRARY_STORAGE_KEY, JSON.stringify(prepared));
+    appStorage.setItem(LESSON_LIBRARY_STORAGE_KEY, JSON.stringify(prepared));
     invalidCentralLocalStorage.delete('lesson_library');
     lessonLibrary = prepared;
     renderLessonLibrary();
@@ -2823,7 +2739,7 @@ function renderLessonLibrary() {
 
 function loadLessonLibrary() {
   try {
-    const saved = JSON.parse(localStorage.getItem(LESSON_LIBRARY_STORAGE_KEY) || '[]');
+    const saved = JSON.parse(appStorage.getItem(LESSON_LIBRARY_STORAGE_KEY) || '[]');
     if (!Array.isArray(saved) || saved.some((item) => !item || typeof item.id !== 'string'
       || typeof item.book !== 'string' || typeof item.text !== 'string')) {
       throw new Error('ساختار کتابخانه معتبر نیست.');
@@ -3163,7 +3079,7 @@ dailyCheckinForm?.addEventListener('submit', (event) => {
   try {
     const previous = state.dailyCheckins;
     const next = [...state.dailyCheckins.filter((item) => item.date !== record.date), record];
-    localStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(next));
+    appStorage.setItem(CHECKIN_STORAGE_KEY, JSON.stringify(next));
     invalidCentralLocalStorage.delete('checkins');
     state.dailyCheckins = next;
     checkinLocalNote.textContent = 'چک‌این روی همین دستگاه ذخیره شد؛ در حال همگام‌سازی ابری...';
@@ -3291,8 +3207,6 @@ document.getElementById('newTradeBtn').addEventListener('click', () => {
   openTradeForm();
 });
 
-document.getElementById('syncKeyBtn').addEventListener('click', changeJournalAccessKey);
-
 document.getElementById('cancelFormBtn').addEventListener('click', () => {
   tradeForm.style.display = 'none';
   resetForm();
@@ -3302,7 +3216,6 @@ document.getElementById('tradeForm').addEventListener('submit', saveTrade);
 document.getElementById('tradeLookupBtn')?.addEventListener('click', lookupTradeDetails);
 document.getElementById('address')?.addEventListener('change', lookupTradeDetails);
 document.getElementById('txLink')?.addEventListener('change', lookupTradeDetails);
-pushEnableButton?.addEventListener('click', enableJournalPush);
 document.getElementById('prevMonthBtn').addEventListener('click', () => {
   state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() - 1, 1);
   renderCalendar();
@@ -3312,15 +3225,38 @@ document.getElementById('nextMonthBtn').addEventListener('click', () => {
   renderCalendar();
 });
 
+function showTelegramGate(message) {
+  document.body.classList.add('telegram-required-mode');
+  document.getElementById('telegramRequiredMessage').textContent = message;
+}
+
 async function hydrateApp() {
+  if (!telegramWebApp || !telegramInitData) {
+    showTelegramGate('این ژورنال فقط به‌صورت مینی‌اپ داخل تلگرام باز می‌شود. از دکمهٔ ربات وارد شو.');
+    return;
+  }
+  telegramWebApp.ready();
+  telegramWebApp.expand();
+  try {
+    telegramWebApp.setHeaderColor?.('#070b10');
+    telegramWebApp.setBackgroundColor?.('#070b10');
+  } catch (error) {
+    console.warn('Telegram Mini App theme could not be applied.', error);
+  }
+
   try {
     const configResponse = await fetch('/api/config');
     const config = await configResponse.json();
-    state.remoteEnabled = Boolean(config.remoteEnabled);
+    if (!configResponse.ok || !config.telegramMiniApp) throw new Error('پیکربندی مینی‌اپ تلگرام در سرور در دسترس نیست.');
+    state.remoteEnabled = true;
     renderApiSettingsConfig(config);
-    setupJournalPush(config);
+    const identityResponse = await apiFetch('/api/me');
+    const identity = await identityResponse.json().catch(() => ({}));
+    if (!identityResponse.ok || !identity.user?.id) throw new Error(identity.message || 'ورود تلگرام تأیید نشد.');
+    telegramUserId = String(identity.user.id);
   } catch (error) {
-    state.remoteEnabled = false;
+    showTelegramGate(error.message || 'ورود امن تلگرام انجام نشد؛ مینی‌اپ را از دکمهٔ ربات دوباره باز کن.');
+    return;
   }
   updateSyncStatus(false);
   try {
@@ -3336,9 +3272,9 @@ async function hydrateApp() {
   const pendingLocalTrades = readLocalTrades();
   if (!state.remoteEnabled) {
     tradeBaselineReady = true;
-  } else if (localStorage.getItem(TRADE_BASELINE_STORAGE_KEY) === null) {
+  } else if (appStorage.getItem(TRADE_BASELINE_STORAGE_KEY) === null) {
     try {
-      localStorage.setItem(TRADE_BASELINE_STORAGE_KEY, JSON.stringify(pendingLocalTrades.map((trade) => String(trade.id || '')).filter(Boolean)));
+      appStorage.setItem(TRADE_BASELINE_STORAGE_KEY, JSON.stringify(pendingLocalTrades.map((trade) => String(trade.id || '')).filter(Boolean)));
       tradeBaselineReady = true;
     } catch (error) {
       checkinLocalNote.textContent = 'ثبت وضعیت اولیهٔ معاملات انجام نشد؛ برای جلوگیری از انتقال ناخواستهٔ معاملات قدیمی، همگام‌سازی معامله‌ها متوقف می‌شود.';

@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test:telegram": "node --test cloudflare/telegram-auth.test.mjs cloudflare/gemini-interactions.test.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

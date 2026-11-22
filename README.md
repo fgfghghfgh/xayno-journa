@@ -1,40 +1,45 @@
-# XAYNO Journal Web
+# XAYNO Telegram Mini App
 
-The production web journal is served by Cloudflare Workers and stores shared journal data in Cloudflare D1. Each browser also keeps a local copy for offline access.
+The XAYNO trading journal is designed to open inside Telegram as a Mini App. Cloudflare Workers hosts the HTTPS app and API; Cloudflare D1 stores each Telegram user's trades and coaching records in a separate namespace.
 
-## Run locally
+## Production setup
 
-```bash
-cd C:\Users\rasol\Desktop\XAYNO-built\journal-web\xayno-journal
-npm install
-npm start
-```
+The app URL is:
 
-Then open:
+`https://xayno-journal-api.seyed-rasool2017.workers.dev`
 
-- http://localhost:3000
+1. Create or choose your bot in [@BotFather](https://t.me/BotFather).
+2. In BotFather, use `/setdomain` and register `xayno-journal-api.seyed-rasool2017.workers.dev` for the bot.
+3. Configure the bot's menu button with `/setmenubutton`; choose a title such as `ژورنال` and use the app URL above.
+4. From this project directory, set the bot token as a Cloudflare secret. Enter it only into Wrangler's hidden prompt; do not paste it into source code or chat:
 
-This starts the legacy Express development server. The production website uses the Cloudflare Worker described below.
+   ```powershell
+   npx wrangler secret put TELEGRAM_BOT_TOKEN
+   ```
 
-## Production cloud storage
+5. Redeploy the Worker:
 
-The live website and API are served by [Cloudflare Worker](https://xayno-journal-api.seyed-rasool2017.workers.dev). Its Worker code is [cloudflare/worker.js](cloudflare/worker.js), with the D1 schema in [cloudflare/migrations/0001_init.sql](cloudflare/migrations/0001_init.sql).
+   ```powershell
+   npx wrangler deploy
+   ```
 
-The website syncs new trades (including embedded images and saved chart candles/drawings), coaching sessions, daily check-ins, personal rules, lesson notes, and the approved trading profile to D1. Existing browser-only trades are preserved locally and explicitly excluded from automatic upload; the sync indicator reports their count. The browser keeps an offline copy and retries cloud synchronization when it reconnects. Deletes for coach records are synchronized as tombstones so an offline browser does not restore deleted notes.
+Open the bot in Telegram and tap its menu button. The app rejects access outside Telegram, verifies the signed and time-limited `initData` on the Worker, and scopes D1 and browser-local records by the verified Telegram user ID. Gemini credentials remain server-only.
 
-The Worker uses the server-only `JOURNAL_ACCESS_KEY` to protect journal APIs and `GEMINI_API_KEY` for AI. The browser never receives the Gemini key. The deployed `/api/health` and `/api/config` endpoints report service and AI configuration. The D1 database does not need R2 for these journal records.
+The `https://` URL is still required to host a Telegram Mini App; opening it directly in a regular browser will show the Telegram-only screen rather than the journal.
 
-Existing Render/Supabase data is separate and has not been imported or deleted. The Cloudflare journal currently starts without old trades, as requested. Do not run `scripts/migrate-render-to-cloudflare.js` unless you later decide to import those trades. The old [server.js](server.js) and [supabase.sql](supabase.sql) are for the legacy Express/Render setup, not the live Cloudflare site.
+The Worker uses Gemini's Interactions API with `gemini-3.5-flash-lite` for chat, coaching, and reports. Temporary overload or availability errors retry once with `gemini-3.1-flash-lite`; invalid credentials and exhausted quota are reported instead of silently retried. The API key remains a Cloudflare secret; model IDs are configured in `wrangler.toml`.
 
-Fetching new chart candles is disabled until a server-only `BIRDEYE_API_KEY` is configured; previously saved chart data still syncs with its trade. Push notifications are not configured on the Worker.
+## Data safety
 
-## Updating the deployment
+The Mini App does not import historical Render, Supabase, or desktop data. Existing D1 rows are not deleted. New trades (including saved chart candles, drawings, and embedded images) and coaching data are stored under the authenticated Telegram user. A user's old browser-only local data is not automatically uploaded.
 
-The existing Worker and D1 database are already configured in [wrangler.toml](wrangler.toml). After changing the web app, validate and deploy from this directory with:
+## Local checks and deployment
 
 ```powershell
+npm run test:telegram
 node --check public\app.js
+npx wrangler deploy --dry-run
 npx wrangler deploy
 ```
 
-Do not create a replacement D1 database or run the old Supabase SQL for the production Worker.
+The Telegram signature tests use a fake test token only; it is not a real bot credential.

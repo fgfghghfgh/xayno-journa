@@ -1,3 +1,6 @@
+import { authenticateTelegram } from './telegram-auth.mjs';
+import { callGeminiInteraction } from './gemini-interactions.mjs';
+
 const COLLECTIONS = new Set([
   'checkins',
   'personal_rules',
@@ -43,63 +46,6 @@ function parseJson(value, fallback = null) {
 
 function requiredCollection(name) {
   return COLLECTIONS.has(name);
-}
-
-function bytesToHex(bytes) {
-  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function constantTimeEqual(left, right) {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  return difference === 0;
-}
-
-async function telegramHmac(keyBytes, value) {
-  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(value)));
-}
-
-async function authenticateTelegram(request, env) {
-  if (!env.TELEGRAM_BOT_TOKEN) return { error: json({ message: 'مینی‌اپ هنوز به توکن ربات تلگرام متصل نشده است.' }, 503) };
-  const authorization = request.headers.get('Authorization') || '';
-  const initData = authorization.startsWith('tma ') ? authorization.slice(4) : '';
-  if (!initData || initData.length > 16_384) return { error: json({ message: 'این ژورنال فقط از داخل مینی‌اپ تلگرام قابل استفاده است.' }, 401) };
-
-  const params = new URLSearchParams(initData);
-  const receivedHash = params.get('hash') || '';
-  const authDate = Number(params.get('auth_date'));
-  if (!/^[\da-f]{64}$/i.test(receivedHash) || !Number.isInteger(authDate)) {
-    return { error: json({ message: 'اطلاعات ورود تلگرام معتبر نیست؛ مینی‌اپ را دوباره باز کن.' }, 401) };
-  }
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (authDate > nowSeconds + 30 || nowSeconds - authDate > 86_400) {
-    return { error: json({ message: 'اطلاعات ورود تلگرام منقضی شده؛ مینی‌اپ را دوباره باز کن.' }, 401) };
-  }
-
-  params.delete('hash');
-  params.delete('signature');
-  const dataCheckString = [...params.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${value}`)
-    .join('\n');
-  const secretKey = await telegramHmac(new TextEncoder().encode('WebAppData'), env.TELEGRAM_BOT_TOKEN);
-  const expectedHash = bytesToHex(await telegramHmac(secretKey, dataCheckString));
-  if (!constantTimeEqual(expectedHash, receivedHash.toLowerCase())) {
-    return { error: json({ message: 'امضای تلگرام تأیید نشد؛ فقط از دکمهٔ خود ربات وارد شو.' }, 401) };
-  }
-
-  let user;
-  try {
-    user = JSON.parse(params.get('user') || 'null');
-  } catch {
-    return { error: json({ message: 'اطلاعات حساب تلگرام قابل خواندن نیست.' }, 401) };
-  }
-  if (!user || !/^\d{1,20}$/.test(String(user.id || ''))) {
-    return { error: json({ message: 'شناسهٔ کاربر تلگرام در اطلاعات ورود وجود ندارد.' }, 401) };
-  }
-  return { userId: String(user.id), user: { id: String(user.id), firstName: String(user.first_name || '').slice(0, 100) } };
 }
 
 function scopedRecordId(userId, id) {
@@ -473,29 +419,22 @@ async function geminiChat(request, env, userId) {
   if (history.at(-1)?.role !== 'user' || history.at(-1)?.parts?.[0]?.text !== message) {
     history.push({ role: 'user', parts: [{ text: message }] });
   }
-  const model = env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash-lite';
-  let response;
+  const model = env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash-lite';
+  let reply;
   try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemText }] },
-          contents: history,
-          generationConfig: { temperature: 0.6 },
-        }),
-      },
-    );
-  } catch {
-    return json({ message: 'سرویس هوش مصنوعی در دسترس نیست یا زمان پاسخ تمام شد.' }, 503);
+    reply = await callGeminiInteraction({
+      apiKey: env.GEMINI_API_KEY,
+      model,
+      fallbackModel: env.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite',
+      system: systemText,
+      messages: history.map((item) => ({
+        role: item.role === 'model' ? 'assistant' : 'user',
+        content: item.parts.map((part) => part.text || '').join(''),
+      })),
+    });
+  } catch (error) {
+    return mapAiError(error, 'سرویس هوش مصنوعی در دسترس نیست یا زمان پاسخ تمام شد.');
   }
-  const result = await response.json().catch(() => ({}));
-  if (response.status === 429) return json({ message: 'سهمیهٔ رایگان هوش مصنوعی تمام شده است؛ کمی بعد دوباره تلاش کن.' }, 429);
-  if (!response.ok) return json({ message: result.error?.message || 'ارتباط با سرویس هوش مصنوعی ناموفق بود.' }, 502);
-  const reply = result.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();
-  if (!reply) return json({ message: 'سرویس هوش مصنوعی پاسخ متنی برنگرداند.' }, 502);
   return json({ reply, tradeCount: trades.length, includedTradeCount: recentTrades.length });
 }
 
@@ -505,51 +444,33 @@ async function generateGemini(env, { system, messages, model, temperature = 0.4,
     error.status = 503;
     throw error;
   }
-  const contents = (messages || []).filter((item) => item && ['user', 'assistant'].includes(item.role))
-    .map((item) => ({
-      role: item.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: String(item.content || '').slice(0, 60_000) }],
+  const extraImages = extraUserParts
+    .filter((part) => part?.inlineData?.data && part?.inlineData?.mimeType)
+    .map((part) => ({
+      type: 'image',
+      data: part.inlineData.data,
+      mime_type: part.inlineData.mimeType,
     }));
-  if (extraUserParts.length) {
-    if (contents.at(-1)?.role === 'user') contents.at(-1).parts.push(...extraUserParts);
-    else contents.push({ role: 'user', parts: extraUserParts });
-  }
-  const generationConfig = { temperature };
-  if (jsonOutput) generationConfig.responseMimeType = 'application/json';
-  let response;
   try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash-lite')}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        body: JSON.stringify({
-          systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-          contents,
-          generationConfig,
-        }),
-      },
-    );
-  } catch {
+    const text = await callGeminiInteraction({
+      apiKey: env.GEMINI_API_KEY,
+      model: model || env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash-lite',
+      fallbackModel: env.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite',
+      system,
+      messages,
+      extraImages,
+      jsonOutput,
+    });
+    return jsonOutput ? parseJson(text, null) : text;
+  } catch (cause) {
     const error = new Error('سرویس هوش مصنوعی در دسترس نیست یا زمان پاسخ تمام شد.');
     error.status = 503;
+    if (cause?.status) {
+      error.message = cause.message;
+      error.status = cause.status;
+    }
     throw error;
   }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(response.status === 429
-      ? 'سهمیهٔ رایگان هوش مصنوعی تمام شده است؛ کمی بعد دوباره تلاش کن.'
-      : (payload.error?.message || 'ارتباط با سرویس هوش مصنوعی ناموفق بود.'));
-    error.status = response.status === 429 ? 429 : 502;
-    throw error;
-  }
-  const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim();
-  if (!text) {
-    const error = new Error('سرویس هوش مصنوعی پاسخ متنی برنگرداند.');
-    error.status = 502;
-    throw error;
-  }
-  return jsonOutput ? parseJson(text, null) : text;
 }
 
 function parseModelJson(text) {
@@ -923,7 +844,7 @@ async function handleReport(env, userId) {
         'نشانه فشار روانی شدید، ناامیدی، ترید قمارگونه یا خطر معیشت: کمک متخصص انسانی را پیشنهاد بده.',
       ].join(' '),
       messages: [{ role: 'user', content: userText }],
-      model: env.GEMINI_REPORT_MODEL || 'gemini-2.5-flash',
+      model: env.GEMINI_REPORT_MODEL || 'gemini-3.5-flash-lite',
       temperature: 0.4,
       extraUserParts: imageParts,
     });
@@ -1004,8 +925,9 @@ async function routeApi(request, env, url) {
       aiChatConfigured: Boolean(env.GEMINI_API_KEY),
       aiReportConfigured: Boolean(env.GEMINI_API_KEY),
       aiChatProvider: 'gemini',
-      aiChatModel: env.GEMINI_CHAT_MODEL || 'gemini-2.5-flash-lite',
-      aiReportModel: env.GEMINI_REPORT_MODEL || 'gemini-2.5-flash',
+      aiChatModel: env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash-lite',
+      aiReportModel: env.GEMINI_REPORT_MODEL || 'gemini-3.5-flash-lite',
+      aiFallbackModel: env.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite',
       chartEnabled: Boolean(env.BIRDEYE_API_KEY),
       pushEnabled: false,
       pushPublicKey: '',
@@ -1060,7 +982,7 @@ async function routeApi(request, env, url) {
   if (url.pathname === '/api/ai/test/report' && request.method === 'POST') {
     try {
       await generateGemini(env, {
-        model: env.GEMINI_REPORT_MODEL || 'gemini-2.5-flash',
+        model: env.GEMINI_REPORT_MODEL || 'gemini-3.5-flash-lite',
         messages: [{ role: 'user', content: 'پاسخ بده: اتصال موفق است.' }],
         temperature: 0,
       });
