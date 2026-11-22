@@ -3790,17 +3790,24 @@ masterReportButton?.addEventListener('click', async () => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || 'ساخت گزارش ناموفق بود.');
+    if (payload.pending) {
+      masterReportStatus.textContent = 'گزارش درخواست‌شده هنوز در حال ساخت است؛ چند لحظهٔ دیگر دوباره بررسی کن.';
+      return;
+    }
+    if (typeof payload.report !== 'string' || !payload.report.trim()) {
+      throw new Error('گزارش پاسخ خالی داشت؛ اطلاعات قبلی تغییر نکرد.');
+    }
     masterReportResult.textContent = payload.report;
     const generatedAt = payload.generatedAt ? new Date(payload.generatedAt).toLocaleString('fa-IR') : '';
     const imageStatus = payload.omittedImages
       ? ` · ${payload.includedImages} تصویر بررسی شد؛ ${payload.omittedImages} تصویر به محدودیت حجم/تعداد خورد`
       : ` · ${payload.includedImages} تصویر بررسی شد`;
-    masterReportStatus.textContent = `${payload.tradeCount} معامله · ${generatedAt}${imageStatus}`;
+    masterReportStatus.textContent = `${payload.tradeCount} معامله · ${generatedAt} · ${payload.cached ? 'از گزارش ذخیره‌شده' : 'گزارش تازه'}${imageStatus}`;
   } catch (error) {
     masterReportStatus.textContent = error.message || 'ساخت گزارش انجام نشد.';
   } finally {
     masterReportButton.disabled = false;
-    masterReportButton.textContent = 'ساخت دوبارهٔ گزارش';
+    masterReportButton.textContent = 'بررسی گزارش';
   }
 });
 
