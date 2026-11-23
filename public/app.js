@@ -78,6 +78,8 @@ const coachPersonalProfileCard = document.getElementById('coachPersonalProfileCa
 const coachPersonalProfileList = document.getElementById('coachPersonalProfileList');
 const coachRepeatedExcuseStatus = document.getElementById('coachRepeatedExcuseStatus');
 const coachRepeatedExcuseList = document.getElementById('coachRepeatedExcuseList');
+const coachWeakMomentStatus = document.getElementById('coachWeakMomentStatus');
+const coachWeakMomentList = document.getElementById('coachWeakMomentList');
 const coachPersonalLearningButton = document.getElementById('loadCoachPersonalLearning');
 const coachPersonalLearningStatus = document.getElementById('coachPersonalLearningStatus');
 const coachPersonalLearningList = document.getElementById('coachPersonalLearningList');
@@ -106,6 +108,8 @@ let coachPersonalProfileQuestions = [];
 let coachPersonalProfileLoaded = false;
 let coachPersonalProfileBusy = false;
 let coachRepeatedExcuseBusy = false;
+let coachWeakMomentBusy = false;
+let coachWeakMomentRefreshTimer = null;
 let coachPersonalLearningBusy = false;
 let coachPersonalLearningRecord = null;
 const monthlyComparisonMonth = document.getElementById('monthlyComparisonMonth');
@@ -1679,6 +1683,7 @@ function setJournalView(view) {
     loadWeeklyCoachReport();
     loadCoachCommitments();
     loadRepeatedCoachExcuses();
+    loadCoachWeakMoments();
   }
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
@@ -4404,6 +4409,63 @@ async function loadRepeatedCoachExcuses() {
     coachRepeatedExcuseStatus.textContent = error.message || 'خواندن عبارت‌های تکراری ناموفق بود.';
   } finally {
     coachRepeatedExcuseBusy = false;
+  }
+}
+
+async function loadCoachWeakMoments() {
+  if (!coachWeakMomentStatus || coachWeakMomentBusy) return;
+  coachWeakMomentBusy = true;
+  coachWeakMomentStatus.textContent = 'زمان‌ها و شاهدهای ثبت‌شده بررسی می‌شوند...';
+  coachWeakMomentList.replaceChildren();
+  try {
+    const response = await apiFetch('/api/coach/weak-moments');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'خواندن هشدار زمان‌های حساس ناموفق بود.');
+    const patterns = Array.isArray(payload.patterns) ? payload.patterns : [];
+    const smallSampleNote = payload.belowMinimumTradeCount
+      ? ' داده هنوز کمه؛ این فقط یک مشاهدهٔ محدود است.'
+      : '';
+    if (!patterns.length) {
+      coachWeakMomentStatus.textContent = `از معامله‌های بسته‌شدهٔ ۹۰ روز اخیر، هم‌زمانی تکرارشوندهٔ ساعت با حالت ذهنی یا اشتباه ثبت‌شده پیدا نشد.${smallSampleNote}`;
+      return;
+    }
+    const hour = new Intl.NumberFormat('fa-IR', { minimumIntegerDigits: 2 }).format(payload.alertHour);
+    coachWeakMomentStatus.textContent = payload.activeNow
+      ? `الان در بازهٔ ${hour}:۰۰ تا ${new Intl.NumberFormat('fa-IR', { minimumIntegerDigits: 2 }).format((payload.alertHour + 1) % 24)}:۰۰ هستی؛ در دست‌کم ${patterns[0].lossCount} معاملهٔ زیان‌ده، مورد مشابه ثبت شده.${smallSampleNote}`
+      : `بازهٔ بعدیِ دارای شاهد امروز ساعت ${hour}:۰۰ تا ${new Intl.NumberFormat('fa-IR', { minimumIntegerDigits: 2 }).format((payload.alertHour + 1) % 24)}:۰۰ است.${smallSampleNote}`;
+    for (const pattern of patterns) {
+      const card = document.createElement('article');
+      card.className = 'coach-repeated-excuse-item';
+      const title = document.createElement('strong');
+      title.textContent = `${pattern.field}: «${pattern.phrase}» · ${pattern.lossCount} معاملهٔ زیان‌ده`;
+      card.append(title);
+      for (const example of pattern.examples || []) {
+        const detail = document.createElement('p');
+        const details = [example.date, example.token, example.emotion, example.mistake].filter(Boolean);
+        detail.textContent = details.join(' · ');
+        card.append(detail);
+      }
+      coachWeakMomentList.append(card);
+    }
+  } catch (error) {
+    coachWeakMomentStatus.textContent = error.message || 'خواندن هشدار زمان‌های حساس ناموفق بود.';
+  } finally {
+    coachWeakMomentBusy = false;
+    if (coachWeakMomentRefreshTimer) clearTimeout(coachWeakMomentRefreshTimer);
+    if (activeJournalView === 'master') {
+      const now = new Date();
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Tehran',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(now).filter((part) => part.type !== 'literal').map(({ type, value }) => [type, value]));
+      const delay = ((59 - Number(parts.minute)) * 60 + (60 - Number(parts.second))) * 1000 - now.getMilliseconds();
+      coachWeakMomentRefreshTimer = setTimeout(() => {
+        if (activeJournalView === 'master') loadCoachWeakMoments();
+      }, Math.max(1000, delay));
+    }
   }
 }
 

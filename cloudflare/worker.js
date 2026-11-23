@@ -25,6 +25,7 @@ import {
 } from './coach-followups.mjs';
 import { prepareCoachMemoryUpdates } from './coach-memory.mjs';
 import { buildRepeatedExcuseReport } from './coach-repeated-excuses.mjs';
+import { buildWeakMomentForecast } from './coach-weak-moments.mjs';
 import {
   applyCoachPersonalProfileAnswer,
   COACH_PERSONAL_PROFILE_ID,
@@ -150,6 +151,11 @@ async function readRepeatedExcuseReport(env, userId) {
     (messageRows.results || []).map((row) => parseJson(row.payload, {})),
     Array.isArray(profile?.answers) ? profile.answers : [],
   );
+}
+
+async function readWeakMomentForecast(env, userId) {
+  const trades = await readTrades(env, userId);
+  return buildWeakMomentForecast(trades, workerTradePnl);
 }
 
 async function handleCoachPersonalProfile(request, env, userId) {
@@ -1031,6 +1037,7 @@ async function geminiChat(request, env, userId) {
     'از محتوای کتاب فقط نکته‌های موجود در کتابخانهٔ کاربر را نقل کن؛ کتاب یا نقل‌قول نساز. تحلیل خودت را صریحاً «این از خودمه، نه از کتاب تو» بنام.',
     'اگر کمتر از ۳۰ معامله ثبت شده، نتیجهٔ آماری قطعی نده و بگو «داده هنوز کمه».',
     'برای تشخیص اشتباه تکراری فقط از repeatedLossEvidence استفاده کن؛ وقتی الگویی را مطرح می‌کنی، حداقل دو نمونه را با تاریخ، توکن و نتیجهٔ ثبت‌شده ذکر کن. تکرار را علت قطعی ضرر معرفی نکن. زیر ۳۰ معامله فقط آن را مشاهدهٔ محدود بدان و صریحاً بگو «داده هنوز کمه»؛ اگر شاهد کافی نیست الگویی نساز.',
+    'weakMomentForecast فقط هم‌زمانی ساعت ورود با حالت ذهنی یا اشتباهِ تکرارشده در دست‌کم دو معاملهٔ زیان‌ده را نشان می‌دهد؛ آن را پیش‌بینی، رابطهٔ علّی یا توصیهٔ ورود/خروج ننام. اگر کاربر دربارهٔ برنامهٔ معاملهٔ همین بازه حرف می‌زند، هشدار کوتاه را با ساعت و نمونه‌های واقعی بگو؛ زیر ۳۰ معامله حتماً بگو «داده هنوز کمه».',
     'در صورت فشار روانی شدید، ناامیدی، ترید قمارگونه یا خطر برای معیشت، پیامدها را متوقف کن و مهربانانه پیشنهاد گفت‌وگو با متخصص انسانی بده.',
     'لحن را با adaptiveCoachTone در زمینه تنظیم کن: supportive یعنی آرام و مشورتی؛ balanced یعنی روشن و متعادل؛ direct یعنی کوتاه‌تر، صریح‌تر و محکم‌تر دربارهٔ پایبندی به قول‌های خود کاربر. فقط وقتی sampleSize حداقل ۳ است از balanced/direct استفاده کن. مورد blocked را شکست انضباطی فرض نکن؛ دربارهٔ مانع با احترام بپرس. حتی در direct تحقیر، تهدید یا دستور معامله نده و اختیار کاربر را حفظ کن.',
     ...(socraticTurn ? [
@@ -1615,6 +1622,7 @@ async function workerCoachContext(env, trades, sessions, userId) {
   });
   const personalProfile = await readCoachPersonalProfile(env, userId);
   const repeatedUserExcuses = await readRepeatedExcuseReport(env, userId);
+  const weakMomentForecast = buildWeakMomentForecast(trades, workerTradePnl);
   const context = {
     adaptiveCoachTone: getAdaptiveCoachTone(sessions),
     tradeCount: trades.length,
@@ -1646,6 +1654,7 @@ async function workerCoachContext(env, trades, sessions, userId) {
       }
       : null,
     repeatedUserExcuses,
+    weakMomentForecast,
     currentWeekTradeIds: recentTrades.filter((trade) => Date.now() - new Date(trade.openedAt || trade.journalDate || 0).getTime() <= 7 * 86400_000)
       .map((trade) => trade.id),
     recentTrades,
@@ -1802,6 +1811,7 @@ async function workerLeanCoachContext(
       }
       : null,
     repeatedUserExcuses,
+    weakMomentForecast: buildWeakMomentForecast(trades, workerTradePnl),
     tradeCount: trades.length,
     overallClosedTradeSummary: dailyLessonActive ? null : summary,
     includedRelevantTrades: dailyLessonActive ? dailyTradeDetails : relatedTrades,
@@ -3203,6 +3213,9 @@ async function routeApi(request, env, url, ctx) {
   }
   if (url.pathname === '/api/coach/repeated-excuses' && request.method === 'GET') {
     return json(await readRepeatedExcuseReport(env, userId));
+  }
+  if (url.pathname === '/api/coach/weak-moments' && request.method === 'GET') {
+    return json(await readWeakMomentForecast(env, userId));
   }
   if (url.pathname === '/api/coach/profile' && request.method === 'POST') return handleCoachProfile(env, userId);
   if (url.pathname === '/api/coach/session/start' && request.method === 'POST') return handleCoachSessionStart(env, request, userId);
