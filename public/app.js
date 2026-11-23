@@ -65,6 +65,22 @@ const summaryGridElement = document.getElementById('summaryGrid');
 const masterView = document.getElementById('masterView');
 const coachView = document.getElementById('coachView');
 const coachChatWelcome = document.getElementById('coachChatWelcome');
+const coachPersonalOnboarding = document.getElementById('coachPersonalOnboarding');
+const coachPersonalProgress = document.getElementById('coachPersonalProgress');
+const coachPersonalQuestionTitle = document.getElementById('coachPersonalQuestionTitle');
+const coachPersonalQuestionPrompt = document.getElementById('coachPersonalQuestionPrompt');
+const coachPersonalAnswer = document.getElementById('coachPersonalAnswer');
+const coachPersonalStatus = document.getElementById('coachPersonalStatus');
+const coachPersonalAnswerSubmit = document.getElementById('coachPersonalAnswerSubmit');
+const coachPersonalSkip = document.getElementById('coachPersonalSkip');
+const coachPersonalRetry = document.getElementById('coachPersonalRetry');
+const coachPersonalProfileCard = document.getElementById('coachPersonalProfileCard');
+const coachPersonalProfileList = document.getElementById('coachPersonalProfileList');
+const coachRepeatedExcuseStatus = document.getElementById('coachRepeatedExcuseStatus');
+const coachRepeatedExcuseList = document.getElementById('coachRepeatedExcuseList');
+const coachPersonalLearningButton = document.getElementById('loadCoachPersonalLearning');
+const coachPersonalLearningStatus = document.getElementById('coachPersonalLearningStatus');
+const coachPersonalLearningList = document.getElementById('coachPersonalLearningList');
 const coachSessionView = document.getElementById('coachSessionView');
 const coachSessionWelcome = document.getElementById('coachSessionWelcome');
 const coachSessionSummary = document.getElementById('coachSessionSummary');
@@ -85,6 +101,13 @@ const coachCommitmentList = document.getElementById('coachCommitmentList');
 const weeklyCoachReportStatus = document.getElementById('weeklyCoachReportStatus');
 const weeklyCoachReportResult = document.getElementById('weeklyCoachReportResult');
 let weeklyCoachReportBusy = false;
+let coachPersonalProfile = null;
+let coachPersonalProfileQuestions = [];
+let coachPersonalProfileLoaded = false;
+let coachPersonalProfileBusy = false;
+let coachRepeatedExcuseBusy = false;
+let coachPersonalLearningBusy = false;
+let coachPersonalLearningRecord = null;
 const monthlyComparisonMonth = document.getElementById('monthlyComparisonMonth');
 const monthlyComparisonNote = document.getElementById('monthlyComparisonNote');
 const monthlyComparisonResult = document.getElementById('monthlyComparisonResult');
@@ -1655,6 +1678,7 @@ function setJournalView(view) {
     renderAfterLossStreak();
     loadWeeklyCoachReport();
     loadCoachCommitments();
+    loadRepeatedCoachExcuses();
   }
   journalViewButtons.forEach((button) => {
     const active = button.dataset.journalView === activeJournalView;
@@ -3228,20 +3252,25 @@ function renderCoachSessionTranscript() {
 
 function setCoachMode() {
   activeCoachMode = 'chat';
-  coachChatWelcome.hidden = masterChatHistory.length > 0;
-  masterChatLog.hidden = masterChatHistory.length === 0;
-  masterChatForm.hidden = false;
+  const profileCompleted = coachPersonalProfileLoaded && coachPersonalProfile?.status === 'completed';
+  coachChatWelcome.hidden = !profileCompleted || masterChatHistory.length > 0;
+  masterChatLog.hidden = !profileCompleted || masterChatHistory.length === 0;
+  masterChatForm.hidden = !profileCompleted;
+  if (coachPersonalOnboarding) coachPersonalOnboarding.hidden = !coachPersonalProfileLoaded || profileCompleted;
   coachLoadOlderMessagesButton.hidden = !conversationHasMoreMessages;
-  document.querySelector('.coach-chat-disclaimer').hidden = false;
-  coachChatHistoryToggle.hidden = false;
-  coachNewConversationButton.hidden = false;
+  document.querySelector('.coach-chat-disclaimer').hidden = !profileCompleted;
+  coachChatHistoryToggle.hidden = !profileCompleted;
+  coachNewConversationButton.hidden = !profileCompleted;
+  document.getElementById('openUrgentEntryMode').hidden = !profileCompleted;
+  if (profileCompleted) masterChatStatus.hidden = false;
   masterChatStatus.hidden = false;
   coachChatActiveTitle.textContent = activeConversation?.title || 'استاد';
 }
 
 function renderMasterChatTranscript() {
-  masterChatLog.hidden = masterChatHistory.length === 0;
-  if (coachChatWelcome) coachChatWelcome.hidden = masterChatHistory.length > 0;
+  const profileCompleted = coachPersonalProfileLoaded && coachPersonalProfile?.status === 'completed';
+  masterChatLog.hidden = !profileCompleted || masterChatHistory.length === 0;
+  if (coachChatWelcome) coachChatWelcome.hidden = !profileCompleted || masterChatHistory.length > 0;
   masterChatLog.replaceChildren(...masterChatHistory.map((entry) => {
     const message = document.createElement('div');
     message.className = `master-message ${entry.role === 'assistant' ? 'assistant' : 'user'}`;
@@ -3250,6 +3279,168 @@ function renderMasterChatTranscript() {
   }));
   masterChatLog.scrollTop = masterChatLog.scrollHeight;
 }
+
+function renderCoachPersonalProfile() {
+  const profileCompleted = coachPersonalProfile?.status === 'completed';
+  const answers = Array.isArray(coachPersonalProfile?.answers) ? coachPersonalProfile.answers : [];
+  const questionIndex = answers.length;
+  if (coachPersonalOnboarding) coachPersonalOnboarding.hidden = !coachPersonalProfileLoaded || profileCompleted;
+  if (coachPersonalProfileCard) coachPersonalProfileCard.hidden = !coachPersonalProfile;
+  masterChatForm.hidden = !profileCompleted;
+  masterChatLog.hidden = !profileCompleted || masterChatHistory.length === 0;
+  if (coachChatWelcome) coachChatWelcome.hidden = !profileCompleted || masterChatHistory.length > 0;
+  document.querySelector('.coach-chat-disclaimer').hidden = !profileCompleted;
+  coachChatHistoryToggle.hidden = !profileCompleted;
+  coachNewConversationButton.hidden = !profileCompleted;
+  document.getElementById('openUrgentEntryMode').hidden = !profileCompleted;
+
+  if (!coachPersonalProfileLoaded) {
+    coachPersonalStatus.textContent = '';
+    coachPersonalProgress.textContent = 'در حال بررسی پروندهٔ شخصی...';
+  } else if (coachPersonalProfileError) {
+    coachPersonalProgress.textContent = 'برای ادامه به اینترنت نیاز است.';
+    coachPersonalStatus.textContent = coachPersonalProfileError;
+    coachPersonalRetry.hidden = false;
+  } else if (profileCompleted) {
+    coachPersonalStatus.textContent = '';
+  } else {
+    const question = coachPersonalProfileQuestions[questionIndex];
+    coachPersonalRetry.hidden = true;
+    if (question) {
+      coachPersonalProgress.textContent = `بخش ${questionIndex + 1} از ${coachPersonalProfileQuestions.length}`;
+      coachPersonalQuestionTitle.textContent = question.title;
+      coachPersonalQuestionPrompt.textContent = question.prompt;
+      if (coachPersonalRenderedQuestionIndex !== questionIndex) {
+        coachPersonalAnswer.value = '';
+        coachPersonalRenderedQuestionIndex = questionIndex;
+      }
+      coachPersonalAnswer.disabled = coachPersonalProfileBusy;
+      coachPersonalAnswerSubmit.disabled = coachPersonalProfileBusy;
+      coachPersonalSkip.disabled = coachPersonalProfileBusy;
+      coachPersonalAnswerSubmit.textContent = coachPersonalProfileBusy ? 'در حال ذخیره...' : 'ثبت پاسخ و ادامه';
+    } else {
+      coachPersonalProgress.textContent = 'وضعیت پرونده قابل ادامه نیست. دوباره تلاش کن.';
+      coachPersonalRetry.hidden = false;
+    }
+  }
+
+  if (!coachPersonalProfileList) return;
+  coachPersonalProfileList.replaceChildren();
+  const groups = [
+    { title: 'چرایی و هدف‌ها', keys: ['motivation', 'goals'] },
+    { title: 'الگوهایی که خودم توصیف کردم', keys: ['decision_style', 'fears_and_excuses', 'hours_and_habits'] },
+    { title: 'رویدادهای مهم', keys: ['first_profit', 'worst_loss'] },
+    { title: 'شرایط و نوع همراهی دلخواهم', keys: ['life_context', 'support_preferences'] },
+  ];
+  for (const group of groups) {
+    const groupAnswers = answers.filter((answer) => group.keys.includes(answer.key) && !answer.skipped && answer.answer);
+    if (!groupAnswers.length) continue;
+    const heading = document.createElement('h3');
+    heading.textContent = group.title;
+    coachPersonalProfileList.append(heading);
+    for (const answer of groupAnswers) {
+      const item = document.createElement('div');
+      item.className = 'coach-personal-answer-card';
+      const title = document.createElement('strong');
+      title.textContent = answer.title;
+      const content = document.createElement('p');
+      content.textContent = answer.answer;
+      item.append(title, content);
+      coachPersonalProfileList.append(item);
+    }
+  }
+  if (coachPersonalProfile && !coachPersonalProfileList.childElementCount) {
+    const empty = document.createElement('p');
+    empty.textContent = 'هنوز پاسخ مستقیمی برای نمایش در پرونده ثبت نشده است.';
+    coachPersonalProfileList.append(empty);
+  }
+}
+
+let coachPersonalProfileError = '';
+let coachPersonalRenderedQuestionIndex = -1;
+
+async function loadCoachPersonalProfile() {
+  coachPersonalProfileLoaded = false;
+  coachPersonalProfile = null;
+  coachPersonalProfileQuestions = [];
+  coachPersonalProfileError = '';
+  renderCoachPersonalProfile();
+  try {
+    let response = await apiFetch('/api/coach/personal-profile');
+    let payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'خواندن پروندهٔ شخصی ناموفق بود.');
+    if (!payload.profile) {
+      response = await apiFetch('/api/coach/personal-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'start' }),
+      });
+      payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'شروع جلسهٔ آشنایی ناموفق بود.');
+    }
+    coachPersonalProfile = payload.profile;
+    coachPersonalProfileQuestions = Array.isArray(payload.questions) ? payload.questions : [];
+    coachPersonalProfileLoaded = true;
+    coachPersonalProfileError = '';
+  } catch (error) {
+    coachPersonalProfileLoaded = true;
+    coachPersonalProfileError = error.message || 'بارگذاری پروندهٔ شخصی ناموفق بود.';
+  }
+  renderCoachPersonalProfile();
+  if (coachPersonalProfile?.status === 'completed') renderMasterChatTranscript();
+}
+
+async function saveCoachPersonalProfileAnswer(skipped = false) {
+  if (coachPersonalProfileBusy || !coachPersonalProfile || coachPersonalProfile.status === 'completed') return;
+  const questionIndex = Array.isArray(coachPersonalProfile.answers) ? coachPersonalProfile.answers.length : 0;
+  coachPersonalProfileBusy = true;
+  coachPersonalStatus.textContent = '';
+  renderCoachPersonalProfile();
+  try {
+    const response = await apiFetch('/api/coach/personal-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'answer',
+        questionIndex,
+        answer: coachPersonalAnswer.value,
+        skipped,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (payload.profile) {
+        coachPersonalProfile = payload.profile;
+        coachPersonalProfileQuestions = Array.isArray(payload.questions)
+          ? payload.questions
+          : coachPersonalProfileQuestions;
+        coachPersonalRenderedQuestionIndex = -1;
+      }
+      throw new Error(payload.message || 'ذخیرهٔ پاسخ ناموفق بود.');
+    }
+    coachPersonalProfile = payload.profile;
+    coachPersonalProfileQuestions = Array.isArray(payload.questions)
+      ? payload.questions
+      : coachPersonalProfileQuestions;
+    coachPersonalProfileError = '';
+    coachPersonalStatus.textContent = payload.completed
+      ? 'جلسهٔ آشنایی کامل شد. پاسخ‌ها در پروندهٔ شخصی تو هستند.'
+      : 'ذخیره شد؛ هر وقت آماده‌ای به بخش بعد برو.';
+    if (payload.completed) {
+      masterChatStatus.textContent = 'جلسهٔ آشنایی کامل شد؛ پاسخ‌هایت در پروندهٔ شخصی ذخیره شده‌اند.';
+    }
+  } catch (error) {
+    coachPersonalStatus.textContent = error.message || 'ذخیرهٔ پاسخ ناموفق بود.';
+  } finally {
+    coachPersonalProfileBusy = false;
+    renderCoachPersonalProfile();
+    if (coachPersonalProfile?.status === 'completed') renderMasterChatTranscript();
+  }
+}
+
+coachPersonalAnswerSubmit?.addEventListener('click', () => saveCoachPersonalProfileAnswer(false));
+coachPersonalSkip?.addEventListener('click', () => saveCoachPersonalProfileAnswer(true));
+coachPersonalRetry?.addEventListener('click', () => loadCoachPersonalProfile());
 
 function newCoachId() {
   return typeof crypto.randomUUID === 'function'
@@ -4180,6 +4371,42 @@ async function loadWeeklyCoachReport(attempt = 0) {
   }
 }
 
+async function loadRepeatedCoachExcuses() {
+  if (!coachRepeatedExcuseStatus || coachRepeatedExcuseBusy) return;
+  coachRepeatedExcuseBusy = true;
+  coachRepeatedExcuseStatus.textContent = 'عبارت‌های ثبت‌شده بررسی می‌شوند...';
+  coachRepeatedExcuseList.replaceChildren();
+  try {
+    const response = await apiFetch('/api/coach/repeated-excuses');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'خواندن عبارت‌های تکراری ناموفق بود.');
+    const patterns = Array.isArray(payload.repeatedPhrases) ? payload.repeatedPhrases : [];
+    if (!patterns.length) {
+      coachRepeatedExcuseStatus.textContent = `در ${Number(payload.scannedMessageCount) || 0} پیام بررسی‌شده، عبارت مشابهی دست‌کم دو بار دیده نشد.`;
+      return;
+    }
+    coachRepeatedExcuseStatus.textContent = `${patterns.length} عبارت تکراری از ${Number(payload.scannedMessageCount) || 0} پیام و پاسخ مصاحبه پیدا شد. این فقط تطبیق متن است، نه قضاوت دربارهٔ نیت تو.`;
+    for (const pattern of patterns) {
+      const card = document.createElement('article');
+      card.className = 'coach-repeated-excuse-item';
+      const title = document.createElement('strong');
+      title.textContent = `«${pattern.phrase}» · ${pattern.count} بار`;
+      card.append(title);
+      for (const example of pattern.examples || []) {
+        const detail = document.createElement('p');
+        const source = example.source === 'profile' ? 'مصاحبهٔ آشنایی' : 'چت';
+        detail.textContent = `${example.date || 'تاریخ نامشخص'} · ${source}: ${example.text}`;
+        card.append(detail);
+      }
+      coachRepeatedExcuseList.append(card);
+    }
+  } catch (error) {
+    coachRepeatedExcuseStatus.textContent = error.message || 'خواندن عبارت‌های تکراری ناموفق بود.';
+  } finally {
+    coachRepeatedExcuseBusy = false;
+  }
+}
+
 function appendMasterMessage(role, text) {
   if (!masterChatLog) return;
   masterChatLog.hidden = false;
@@ -4463,6 +4690,7 @@ async function hydrateApp() {
   resetForm();
   renderAll();
   try {
+    await loadCoachPersonalProfile();
     await loadCoachConversations();
     masterChatListStatus.textContent = '';
     await handleCoachLaunchLink();

@@ -529,6 +529,28 @@
       .coach-avatar { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(0,245,160,.28); border-radius: 12px; background: linear-gradient(145deg, rgba(0,245,160,.2), rgba(0,212,245,.08)); color: var(--green); font-size: 13px; font-weight: 900; }
       .coach-chat-status { min-height: 0; margin: 0; padding: 0 20px; color: var(--text-dim); font-size: 10px; line-height: 1.7; }
       .coach-chat-status:not(:empty) { padding-top: 7px; }
+      .coach-personal-onboarding { position: absolute; z-index: 4; inset: 68px 0 0; overflow-y: auto; padding: clamp(18px, 5vw, 42px); background: rgba(7,13,17,.98); }
+      .coach-personal-onboarding[hidden], .coach-personal-profile-card[hidden] { display: none !important; }
+      .coach-personal-onboarding-inner { width: min(660px, 100%); margin: 0 auto; padding: clamp(18px, 4vw, 32px); border: 1px solid rgba(0,245,160,.18); border-radius: 20px; background: linear-gradient(145deg, rgba(0,245,160,.055), rgba(255,255,255,.018)); }
+      .coach-personal-onboarding h2 { margin: 0 0 10px; font-size: clamp(19px, 3vw, 25px); }
+      .coach-personal-onboarding p { color: var(--text-dim); font-size: 12px; line-height: 1.9; }
+      .coach-personal-progress { margin: 14px 0; color: var(--green) !important; font-size: 11px !important; }
+      .coach-personal-onboarding textarea { display: block; width: 100%; min-height: 130px; margin: 18px 0 12px; padding: 13px; resize: vertical; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(0,0,0,.2); color: var(--text); font: inherit; line-height: 1.9; }
+      .coach-personal-onboarding-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+      .coach-personal-onboarding-actions button { min-height: 40px; padding: 8px 14px; border: 1px solid rgba(0,245,160,.24); border-radius: 11px; background: rgba(0,245,160,.1); color: var(--text); font: inherit; cursor: pointer; }
+      .coach-personal-onboarding-actions button:disabled { opacity: .55; cursor: wait; }
+      .coach-personal-onboarding-actions .secondary { border-color: rgba(255,255,255,.12); background: rgba(255,255,255,.035); }
+      .coach-personal-answer-card { padding: 12px 0; border-top: 1px solid rgba(255,255,255,.07); }
+      .coach-personal-answer-card strong { display: block; margin-bottom: 5px; font-size: 12px; }
+      .coach-personal-answer-card p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .coach-personal-profile-card { grid-column: 1 / -1; }
+      .coach-personal-profile-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 24px; margin-top: 12px; }
+      .coach-personal-profile-list h3 { grid-column: 1 / -1; margin: 12px 0 0; font-size: 13px; }
+      .coach-repeated-excuse-list { display: grid; gap: 10px; margin-top: 12px; }
+      .coach-repeated-excuse-item { padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: rgba(0,0,0,.12); }
+      .coach-repeated-excuse-item strong { display: block; margin-bottom: 5px; font-size: 12px; }
+      .coach-repeated-excuse-item p { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+      @media (max-width: 700px) { .coach-personal-profile-list { grid-template-columns: 1fr; } .coach-personal-onboarding { inset-block-start: 60px; padding: 12px; } }
       .coach-chat-welcome { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; width: min(680px, 100%); margin: 0 auto; padding: 28px 24px 12px; text-align: center; }
       .coach-chat-welcome[hidden] { display: none !important; }
       .coach-welcome-orb { display: grid; place-items: center; width: 58px; height: 58px; margin-bottom: 19px; border: 1px solid rgba(0,245,160,.22); border-radius: 20px; background: radial-gradient(circle at 35% 20%, rgba(0,245,160,.2), rgba(0,212,245,.06)); color: var(--green); font-size: 28px; box-shadow: 0 0 35px rgba(0,245,160,.08); }
@@ -1555,6 +1577,22 @@
                 <button id="coachNewConversation" class="coach-chat-new-top" type="button" aria-label="گفت‌وگوی جدید" title="گفت‌وگوی جدید">＋</button>
               </header>
               <p id="masterChatStatus" class="coach-chat-status" role="status" aria-live="polite"></p>
+              <section id="coachPersonalOnboarding" class="coach-personal-onboarding" aria-labelledby="coachPersonalOnboardingTitle" hidden>
+                <div class="coach-personal-onboarding-inner">
+                  <h2 id="coachPersonalOnboardingTitle">جلسهٔ آشنایی با استاد</h2>
+                  <p>این گفت‌وگو فقط یک بار انجام می‌شود و پاسخ‌هایت در پروندهٔ شخصی ذخیره می‌شوند. هر بخش را می‌توانی رد کنی؛ فقط چیزهایی را بگو که با گفتنشان راحتی.</p>
+                  <p id="coachPersonalProgress" class="coach-personal-progress" role="status" aria-live="polite"></p>
+                  <h3 id="coachPersonalQuestionTitle"></h3>
+                  <p id="coachPersonalQuestionPrompt"></p>
+                  <textarea id="coachPersonalAnswer" maxlength="3000" aria-label="پاسخ به پرسش آشنایی"></textarea>
+                  <p id="coachPersonalStatus" role="status" aria-live="polite"></p>
+                  <div class="coach-personal-onboarding-actions">
+                    <button id="coachPersonalAnswerSubmit" type="button">ثبت پاسخ و ادامه</button>
+                    <button id="coachPersonalSkip" class="secondary" type="button">رد کردن این بخش</button>
+                    <button id="coachPersonalRetry" class="secondary" type="button" hidden>تلاش دوباره</button>
+                  </div>
+                </div>
+              </section>
               <div id="coachChatWelcome" class="coach-chat-welcome">
                 <span class="coach-welcome-orb" aria-hidden="true">✦</span>
                 <h1>سلام، از کجا شروع کنیم؟</h1>
@@ -1569,7 +1607,7 @@
               </div>
               <div id="masterChatLog" class="master-chat-log" aria-live="polite" hidden></div>
               <button id="coachLoadOlderMessages" class="coach-load-older" type="button" hidden>بارگذاری پیام‌های قدیمی‌تر</button>
-              <form id="masterChatForm" class="master-chat-form">
+              <form id="masterChatForm" class="master-chat-form" hidden>
                 <textarea id="masterChatInput" maxlength="3000" rows="1" placeholder="پیامت را برای استاد بنویس..." aria-label="پیام برای استاد"></textarea>
                 <button id="masterChatSend" type="submit" aria-label="ارسال پیام">↑</button>
               </form>
@@ -1609,6 +1647,17 @@
                 <p id="coachMemoryStatus" class="coach-memory-status" role="status" aria-live="polite"></p>
                 <div id="coachMemoryList" class="coach-memory-list"></div>
               </details>
+            </article>
+            <article id="coachPersonalProfileCard" class="master-card coach-personal-profile-card" hidden>
+              <h2>پروندهٔ شخصی من</h2>
+              <p>این پرونده فقط پاسخ‌های مستقیمی را نشان می‌دهد که خودت در جلسهٔ آشنایی ثبت کرده‌ای؛ پاسخ ردشده یا برداشت تأییدنشده به‌عنوان واقعیت نمایش داده نمی‌شود.</p>
+              <div id="coachPersonalProfileList" class="coach-personal-profile-list"></div>
+            </article>
+            <article class="master-card master-report">
+              <h2>عبارت‌های تکراری من</h2>
+              <p>فقط جمله‌های خودت از چت و مصاحبهٔ آشنایی مقایسه می‌شوند. شمارش، تطبیق تقریبی عبارت‌هاست؛ شاهدها را ببین و اگر مشابهت درست نیست، آن را نتیجهٔ قطعی نگیر.</p>
+              <div id="coachRepeatedExcuseStatus" class="master-report-status" role="status" aria-live="polite"></div>
+              <div id="coachRepeatedExcuseList" class="coach-repeated-excuse-list" aria-live="polite"></div>
             </article>
             <article class="master-card checkin-card">
               <h2>چک‌این قبل از شروع روز</h2>
